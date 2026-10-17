@@ -92,6 +92,14 @@ final class People
                 if (self::sameName($cand['name'], $name) && (!$email || !$cand['email'] || $cand['email'] === $email)) { $p = $cand; break; }
             }
         }
+        if (!$p && $name !== '' && $batch) {
+            // "Anesh D Sundar" and "Anesh Sundar" from the same batch are one person (initials dropped).
+            $bare = fn ($n) => implode(' ', array_filter(explode(' ', self::norm($n)), fn ($w) => mb_strlen($w) > 1));
+            $nb = $bare($name);
+            foreach (Db::q('SELECT * FROM people WHERE batch = ?', [$batch]) as $cand) {
+                if ($nb !== '' && str_contains($nb, ' ') && $bare($cand['name']) === $nb && (!$email || !$cand['email'] || $cand['email'] === $email)) { $p = $cand; break; }
+            }
+        }
         if (!$p) {
             $id = Db::exec('INSERT INTO people (name, email, batch, roles, active) VALUES (?, ?, ?, ?, 1)',
                 [mb_substr($name ?: $email, 0, 150), $email ?: null, $batch ?: null, self::cleanRoles($roles)]);
@@ -102,6 +110,7 @@ final class People
         $f = [];
         if ($newRoles !== $p['roles']) $f['roles'] = $newRoles;
         if (!$p['email'] && $email) $f['email'] = $email;
+        if ($name !== '' && mb_strlen($name) > mb_strlen($p['name']) && self::norm($name) !== self::norm($p['name']) && str_contains(self::norm($name), explode(' ', self::norm($p['name']))[0])) $f['name'] = mb_substr($name, 0, 150);
         if (!$p['batch'] && $batch) $f['batch'] = mb_substr($batch, 0, 60);
         if ($f) { Db::update('people', (int) $p['id'], $f); $stats['updated'] = ($stats['updated'] ?? 0) + 1; $p = $f + $p; }
         return $p;
@@ -148,13 +157,14 @@ final class People
      * Imports people from an Excel/CSV file.
      * - Sheets named like Editors/Reviewers (reviewer), Team (team), Contributors/Authors (contributor), or any sheet with
      *   a Name + Email header. Columns found by header: name, email, batch/years, linkedin, phone, role.
-     * - A "Status" sheet with a "Section owners" column: rows like "IX. LIGHT & COLOR | Nivitha" set the section owners.
+     * - A "Status" sheet with a "Section owners" column: rows like "IX. LIGHT & COLOR | Nivitha" set the section owners;
+     *   optional "Reviewer 1" / "Reviewer 2" columns on the same sheet set the section's default reviewers.
      */
     public static function import(string $path, string $originalName, ?int $userId): array
     {
         $book = Xlsx::read($path, $originalName);
         $stats = ['added' => 0, 'updated' => 0];
-        $report = ['sheets' => [], 'sectionOwners' => [], 'unmatched' => [], 'skipped' => []];
+        $report = ['sheets' => [], 'sectionOwners' => [], 'sectionReviewers' => [], 'unmatched' => [], 'skipped' => []];
         $ownerSheets = [];
         $isBatch = fn ($v) => (bool) preg_match('/^\s*(\d{4}\s*[-–]\s*\d{2,4}|\d{4}\s*student|faculty.*)\s*$/i', $v);
 
@@ -171,13 +181,18 @@ final class People
                     elseif (preg_match('/phone|mobile|whatsapp/', $h)) $cols['phone'] ??= $c;
                     elseif ($h === 'role' || $h === 'roles') $cols['role'] ??= $c;
                     elseif (str_contains($h, 'section owner')) $cols['owners'] ??= $c;
+                    elseif (preg_match('/^reviewers?\s*(1|one|i)$/', $h)) $cols['reviewer1'] ??= $c;
+                    elseif (preg_match('/^reviewers?\s*(2|two|ii)$/', $h)) $cols['reviewer2'] ??= $c;
                     elseif (preg_match('/^sections?( \/ articles?)?$|^articles?$/', $h)) $cols['sections'] ??= $c;
                 }
                 if (isset($cols['owners']) && !isset($cols['sections'])) unset($cols['owners']); // a "Section Owner" value, not a header
                 if (isset($cols['owners']) || isset($cols['name'])) { $hdrIdx = $i; break; }
                 $cols = [];
             }
-            if (isset($cols['owners'])) { $ownerSheets[$sheet] = [$rows, $cols['owners'], $hdrIdx]; continue; }
+            if (isset($cols['owners'])) {
+                $ownerSheets[$sheet] = [$rows, array_filter(['owner' => $cols['owners'], 'reviewer1' => $cols['reviewer1'] ?? null, 'reviewer2' => $cols['reviewer2'] ?? null], fn ($c) => $c !== null), $hdrIdx];
+                continue;
+            }
             $role = self::defaultRole($sheet);
             if (!$role && !(isset($cols['name']) && isset($cols['email']))) { $report['skipped'][] = $sheet; continue; }
             $role ??= 'contributor';
@@ -201,8 +216,9 @@ final class People
                 if (preg_match('/^(s\.?\s?no|name|editor list|years in)/i', $name) || ($name !== '' && !preg_match('/\p{L}{2,}/u', $name))) continue;
                 $roles = [$role];
                 if (isset($cols['role']) && ($row[$cols['role']] ?? '') !== '') {
+                    $roles = []; // a Role column overrides the sheet's default role
                     foreach (preg_split('/[,;\/]+/', strtolower($row[$cols['role']])) as $r) {
-                        $r = trim(str_replace(' ', '_', $r));
+                        $r = str_replace(' ', '_', trim($r));
                         if (isset(self::ROLES[$r])) $roles[] = $r; elseif ($r === 'owner') $roles[] = 'section_owner';
                     }
                 }
@@ -218,31 +234,42 @@ final class People
             $report['sheets'][] = ['sheet' => $sheet, 'role' => self::ROLES[$role], 'people' => $count];
         }
 
-        // Section owners from a Status-style sheet (after everyone is known, so short names can be matched).
-        foreach ($ownerSheets as $sheet => [$rows, $ownerCol, $hdrIdx]) {
+        // Section owners (and optional Reviewer 1 / Reviewer 2 columns) from a Status-style sheet,
+        // after everyone is known so short names can be matched.
+        foreach ($ownerSheets as $sheet => [$rows, $roleCols, $hdrIdx]) {
+            $firstCol = min($roleCols);
+            $setCount = 0;
             foreach ($rows as $i => $row) {
                 if ($i <= $hdrIdx) continue;
                 $label = '';
-                foreach ($row as $c => $v) if ($c < $ownerCol && preg_match('/^\s*[IVXLC]+\.\s+\S/', $v)) $label = $v;
-                $owners = trim($row[$ownerCol] ?? '');
-                if ($label === '' || $owners === '' || $owners === '-') continue;
-                $section = self::sectionFor($label);
-                if (!$section) { $report['unmatched'][] = "Section not found: $label"; continue; }
-                $names = [];
-                foreach (preg_split('/\s*(?:,|\/|&|\band\b)\s*/i', $owners) as $tok) {
-                    $tok = trim($tok);
-                    if ($tok === '' || mb_strlen($tok) < 2) continue;
-                    $amb = false;
-                    $p = self::matchName($tok, $amb);
-                    if (!$p && $amb) { $report['unmatched'][] = "\"$tok\" ({$section['name']}) matches more than one person - set this owner by hand"; continue; }
-                    if (!$p) $p = self::upsert($tok, null, null, ['section_owner'], $stats);
-                    else self::upsert($p['name'], $p['email'], null, ['section_owner'], $stats);
-                    Db::exec("INSERT IGNORE INTO section_people (section_id, person_id, role) VALUES (?, ?, 'owner')", [$section['id'], $p['id']]);
-                    $names[] = $p['name'];
+                foreach ($row as $c => $v) if ($c < $firstCol && preg_match('/^\s*[IVXLC]+\.\s+\S/', $v)) $label = $v;
+                if ($label === '') continue;
+                $section = null;
+                foreach ($roleCols as $secRole => $col) {
+                    $cell = trim($row[$col] ?? '');
+                    if ($cell === '' || $cell === '-') continue;
+                    $section ??= self::sectionFor($label);
+                    if (!$section) { $report['unmatched'][] = "Section not found: $label"; break; }
+                    $names = [];
+                    foreach (preg_split('/\s*(?:,|\/|&|;|\band\b)\s*/i', $cell) as $tok) {
+                        $tok = trim($tok);
+                        if ($tok === '' || mb_strlen($tok) < 2) continue;
+                        $amb = false;
+                        $p = self::matchName($tok, $amb);
+                        $what = self::SECTION_ROLES[$secRole];
+                        if (!$p && $amb) { $report['unmatched'][] = "\"$tok\" ({$section['name']}, $what) matches more than one person - use the full name or set it by hand"; continue; }
+                        $personRole = $secRole === 'owner' ? 'section_owner' : 'reviewer';
+                        if (!$p) $p = self::upsert($tok, null, null, [$personRole], $stats);
+                        else self::upsert($p['name'], $p['email'], null, [$personRole], $stats);
+                        Db::exec('INSERT IGNORE INTO section_people (section_id, person_id, role) VALUES (?, ?, ?)', [$section['id'], $p['id'], $secRole]);
+                        $names[] = $p['name'];
+                        $setCount++;
+                    }
+                    if ($names && $secRole === 'owner') $report['sectionOwners'][] = ['section' => $section['num'] . '. ' . $section['name'], 'owners' => $names];
+                    if ($names && $secRole !== 'owner') $report['sectionReviewers'][] = ['section' => $section['num'] . '. ' . $section['name'], 'round' => $secRole === 'reviewer1' ? 1 : 2, 'people' => $names];
                 }
-                if ($names) $report['sectionOwners'][] = ['section' => $section['num'] . '. ' . $section['name'], 'owners' => $names];
             }
-            $report['sheets'][] = ['sheet' => $sheet, 'role' => 'Section owners', 'people' => array_sum(array_map(fn ($s) => count($s['owners']), $report['sectionOwners']))];
+            $report['sheets'][] = ['sheet' => $sheet, 'role' => 'Section owners / reviewers', 'people' => $setCount];
         }
         Activity::log(null, null, $userId, 'people_imported', "$originalName: {$stats['added']} added, {$stats['updated']} updated");
         return $stats + $report;

@@ -664,6 +664,7 @@
         modal('Import finished', `<p style="margin-top:0"><strong>${r.added}</strong> added, <strong>${r.updated}</strong> updated.</p>
           <ul class="filelist">${r.sheets.map((s) => `<li>${esc(s.sheet)} → ${esc(s.role)}: ${s.people}</li>`).join('')}</ul>
           ${r.sectionOwners.length ? `<h3 class="sec-h">Section owners</h3><ul class="filelist">${r.sectionOwners.map((s) => `<li>${esc(s.section)}: ${s.owners.map(esc).join(', ')}</li>`).join('')}</ul>` : ''}
+          ${(r.sectionReviewers || []).length ? `<h3 class="sec-h">Section reviewers</h3><ul class="filelist">${r.sectionReviewers.map((s) => `<li>${esc(s.section)} · Reviewer ${s.round}: ${s.people.map(esc).join(', ')}</li>`).join('')}</ul>` : ''}
           ${r.unmatched.length ? `<div class="notes">${r.unmatched.map(esc).join('\n')}</div>` : ''}
           ${r.skipped.length ? `<p class="muted" style="font-size:12px">Sheets not used: ${r.skipped.map(esc).join(', ')}</p>` : ''}
           <div class="row"><span class="grow"></span><a class="btn" href="#/people/sections" id="toSec">Set section reviewers</a><button class="btn primary" id="impOk">Done</button></div>`);

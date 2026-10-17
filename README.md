@@ -41,8 +41,10 @@ Any folder can be downloaded as a ZIP. The folder list is set in *Settings → I
 
 *People* holds everyone involved — reviewers, section owners, contributors and team — with email, batch, LinkedIn and phone.
 Admins add people by hand or **Import from Excel** (.xlsx or CSV): sheets named Editors/Reviewers, Team and
-Contributors/Authors are read (or any sheet with Name + Email columns), and a Status sheet with a *Section owners*
-column sets each section's owners. Re-importing updates people instead of duplicating them.
+Contributors/Authors are read (or any sheet with Name + Email columns; a *Role* column such as "reviewer, team"
+overrides the sheet's default), and a Status sheet with a *Section owners* column (plus optional *Reviewer 1* /
+*Reviewer 2* columns) sets each section's owners and default reviewers. Re-importing fills in blanks (emails, batch)
+and adds roles instead of duplicating people; the same name with or without an initial in the same batch is one person.
 
 *People → Section reviewers* sets, per section, the **owners** (copied on that section's review emails) and the default
 **Reviewer 1** and **Reviewer 2**. After an article's AI review those people are added automatically (the author is
