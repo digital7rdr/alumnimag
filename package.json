@@ -1,0 +1,32 @@
+{
+  "name": "alumnimag",
+  "version": "1.0.0",
+  "description": "The Missing Link - Alumni Magazine editorial dashboard (drive.readthemissinglink.net)",
+  "main": "server.js",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "express-mysql-session": "^3.0.3",
+    "express-session": "^1.18.1",
+    "helmet": "^7.1.0",
+    "jimp": "^0.22.12",
+    "jszip": "^3.10.1",
+    "mammoth": "^1.8.0",
+    "multer": "^1.4.5-lts.1",
+    "mysql2": "^3.11.5",
+    "nodemailer": "^6.9.16",
+    "pdf-parse": "^1.1.1",
+    "quill": "^2.0.3",
+    "sanitize-html": "^2.13.1"
+  }
+}

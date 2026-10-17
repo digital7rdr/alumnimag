@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>The Missing Link · Editorial Desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@600;700&display=swap" rel="stylesheet">
+  <link href="/vendor/quill/quill.snow.css" rel="stylesheet">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="loginForm" class="login-card">
+      <div class="brand-mark">TML</div>
+      <h1>Editorial Desk</h1>
+      <p class="muted">The Missing Link · alumni magazine</p>
+      <label>Email<input name="email" type="email" required autocomplete="username"></label>
+      <label>Password<input name="password" type="password" required autocomplete="current-password"></label>
+      <button class="btn primary block" type="submit">Sign in</button>
+      <p id="loginError" class="error-text"></p>
+    </form>
+  </div>
+
+  <div id="app" class="shell hidden">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">TML</div><div><div class="brand-name">Editorial Desk</div><div class="brand-sub">The Missing Link</div></div></div>
+      <nav>
+        <a href="#/" data-nav="home">Overview</a>
+        <a href="#/editions" data-nav="editions">Library</a>
+        <a href="#/settings" data-nav="settings" class="admin-only">Settings</a>
+        <a href="#/users" data-nav="users" class="admin-only">Users</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div id="whoami"></div>
+        <button id="logoutBtn" class="btn ghost small">Sign out</button>
+      </div>
+    </aside>
+    <main id="view" class="view"></main>
+  </div>
+
+  <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle"></h2><button class="icon-btn" id="modalClose" aria-label="Close">×</button></div><div id="modalBody" class="modal-body"></div></div></div>
+  <div id="toasts" class="toasts"></div>
+
+  <script src="/vendor/quill/quill.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
