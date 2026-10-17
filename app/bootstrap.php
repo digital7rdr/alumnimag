@@ -28,7 +28,7 @@ class AppError extends RuntimeException
     }
 }
 
-foreach (['Config', 'Db', 'Settings', 'Storage', 'Html', 'Docx', 'Intake', 'Ai', 'Mailer', 'Reviews', 'Wp', 'Folders', 'Migrate', 'Http', 'Api', 'PublicPages'] as $m) {
+foreach (['Config', 'Db', 'Settings', 'Storage', 'Html', 'Docx', 'Intake', 'Ai', 'AiImage', 'Mailer', 'Reviews', 'Wp', 'Folders', 'Migrate', 'Http', 'Api', 'PublicPages'] as $m) {
     require __DIR__ . "/$m.php";
 }
 

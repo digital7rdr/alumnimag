@@ -96,12 +96,16 @@ Only `public/` is web-facing. `bin/deploy.sh` copies it into the subdomain's web
    (https://console.groq.com/keys, free tier) in `.env`. Choose the main provider in *Settings → AI review*;
    when it fails (no credit, rate limit), the other one is used automatically if its key is set.
    Groq is text-only (no image generation); its free tier limits tokens per minute, so very long articles may need Gemini.
-6. **Gmail** — on alumnikarunya@gmail.com create an App Password (Google Account → Security → App passwords)
+6. **AI images (optional)** — the ✨ AI image button on an article writes a picture description from the article and
+   generates the picture with Cloudflare Workers AI (free daily allowance, FLUX model). In the Cloudflare dashboard open
+   *AI → Workers AI → Use REST API*, create the API token and copy the Account ID, then set `CF_ACCOUNT_ID` and
+   `CF_API_TOKEN` in `.env`. Pictures are saved with the article's photos and can be inserted or made the featured image.
+7. **Gmail** — on alumnikarunya@gmail.com create an App Password (Google Account → Security → App passwords)
    and put it in `SMTP_PASS`.
-7. **WordPress** — on an administrator account go to *Users → Profile → Application Passwords*, create one,
+8. **WordPress** — on an administrator account go to *Users → Profile → Application Passwords*, create one,
    and enter the username and password in *Settings → WordPress*.
    Copy `wordpress/tml-bridge.php` to `wp-content/mu-plugins/` so drafts get the Divi layout settings.
-8. Open https://drive.readthemissinglink.net, sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, add editors under *Users*.
+9. Open https://drive.readthemissinglink.net, sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, add editors under *Users*.
 
 ### Updating
 

@@ -217,6 +217,8 @@ final class Api
                 Activity::log((int) $a['id'], (int) $a['edition_id'], self::uid(), 'files_added', implode(', ', array_column($saved, 'name')));
                 Http::json(['saved' => $saved]);
             }, false],
+            ['POST', '/articles/(\d+)/ai-image/prompt', fn ($b, $id) => Http::json(['prompt' => AiImage::suggestPrompt((int) $id)]), false],
+            ['POST', '/articles/(\d+)/ai-image', fn ($b, $id) => Http::json(AiImage::generate((int) $id, (string) ($b['prompt'] ?? ''), self::uid())), false],
             ['POST', '/articles/(\d+)/ai-review', fn ($b, $id) => Http::json(Ai::review((int) $id, self::uid())), false],
             ['POST', '/editions/(\d+)/ai-review-all', function ($b, $id) {
                 $n = Ai::queueEdition((int) $id);
@@ -316,6 +318,7 @@ final class Api
             ['GET', '/settings', fn () => Http::json(Settings::publicView() + ['default_prompt' => Ai::DEFAULT_PROMPT, 'env' => [
                 'gemini' => (bool) Config::get('GEMINI_API_KEY'),
                 'groq' => (bool) Config::get('GROQ_API_KEY'),
+                'image' => AiImage::configured(),
                 'smtp' => Config::get('SMTP_USER') && Config::get('SMTP_PASS'),
                 'storageDir' => Storage::root(),
                 'uploadLimit' => ini_get('upload_max_filesize') . ' per file, ' . ini_get('post_max_size') . ' per upload',

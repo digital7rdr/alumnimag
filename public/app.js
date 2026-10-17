@@ -49,6 +49,7 @@
   }
 
   function modal(title, html, { wide = false } = {}) {
+    $('#modalClose').onclick = closeModal;
     $('#modalTitle').textContent = title;
     $('#modalBody').innerHTML = html;
     $('.modal-card').classList.toggle('wide', wide);
@@ -448,7 +449,7 @@
         <div class="side">
           <div class="card"><h3>Next step</h3><div style="display:flex;flex-direction:column;gap:8px">${actions.join('')}</div>
             ${a.ai_notes ? `<div class="notes" style="margin-top:10px"><strong>Notes</strong>\n${esc(a.ai_notes)}</div>` : ''}</div>
-          <div class="card"><h3>Photos (${images.length})<button class="btn small" id="addImg">Add</button></h3>
+          <div class="card"><h3>Photos (${images.length})<span class="row" style="gap:6px"><button class="btn small" id="aiImg">✨ AI image</button><button class="btn small" id="addImg">Add</button></span></h3>
             ${images.length ? `<div class="gallery">${images.map((f) => `<div class="thumb ${a.featured_file_id === f.id ? 'featured' : ''}">${a.featured_file_id === f.id ? '<span class="star">FEATURED</span>' : ''}<img src="/files/${f.id}" loading="lazy" alt="${esc(f.original_name)}"><div class="acts"><button data-feat="${f.id}">Feature</button><button data-ins="${f.id}">Insert</button></div></div>`).join('')}</div>
             <p class="muted" style="font-size:12px;margin:8px 0 0">Featured photo becomes the 1200×600 WordPress image. Photos are never deleted when the article moves between stages.</p>` : '<p class="muted" style="margin:0">No photos yet.</p>'}
             <input type="file" id="imgIn" multiple hidden accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx"></div>
@@ -497,6 +498,7 @@
     $$('[data-act]').forEach((b) => { b.onclick = () => busy(b, async () => { await act[b.dataset.act](); article(id); }); });
 
     $('#addImg').onclick = () => $('#imgIn').click();
+    $('#aiImg').onclick = () => aiImageModal(id, a, { save, isDirty: () => dirty, insert: (fid) => { const r = quill.getSelection(true); quill.insertEmbed(r ? r.index : quill.getLength(), 'image', `/files/${fid}`); dirty = true; } });
     $('#imgIn').onchange = async (e) => {
       const fd = new FormData();
       [...e.target.files].forEach((f) => fd.append('files[]', f));
@@ -526,6 +528,27 @@
     if (a.status === 'reviewing') poller = setInterval(async () => { const x = await api(`/articles/${id}`); if (x.status !== 'reviewing') article(id); }, 5000);
   }
 
+  // ---------- AI image ----------
+  function aiImageModal(id, a, ed) {
+    let made = null;
+    const body = modal('AI image', `
+      <label>Describe the picture<textarea id="aiPrompt" rows="4" placeholder="e.g. A mountain trail at sunrise with hikers in the distance, wide view"></textarea></label>
+      <div class="row" style="margin-bottom:12px"><button class="btn" id="aiSuggest">Suggest from article</button><span class="grow"></span><button class="btn primary" id="aiGo">Generate</button></div>
+      <div id="aiOut"></div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">Made with Cloudflare Workers AI (free daily allowance). Every picture is saved with this article's photos. It is good practice to mark AI pictures as illustrations.</p>`, { wide: true });
+    const done = async () => { closeModal(); if (ed.isDirty()) await ed.save(true); article(id); };
+    $('#aiSuggest', body).onclick = (e) => busy(e.target, async () => { $('#aiPrompt', body).value = (await api(`/articles/${id}/ai-image/prompt`, { method: 'POST' })).prompt; }, 'Thinking…');
+    $('#aiGo', body).onclick = (e) => busy(e.target, async () => {
+      made = await api(`/articles/${id}/ai-image`, { method: 'POST', body: { prompt: $('#aiPrompt', body).value } });
+      $('#aiOut', body).innerHTML = `<img src="/files/${made.id}" alt="" style="display:block;max-width:100%;max-height:360px;margin:0 auto;border-radius:8px;border:1px solid var(--line)">
+        <div class="row" style="margin-top:10px"><button class="btn primary" id="aiIns">Insert into text</button><button class="btn" id="aiFeat">Make featured image</button><span class="grow"></span><button class="btn ghost" id="aiKeep">Keep in photos only</button></div>`;
+      $('#aiIns', body).onclick = () => { ed.insert(made.id); toast('AI image inserted'); done(); };
+      $('#aiFeat', body).onclick = async () => { if (ed.isDirty()) await ed.save(true); await api(`/articles/${id}`, { method: 'PUT', body: { featured_file_id: made.id } }); toast('Featured image set'); closeModal(); article(id); };
+      $('#aiKeep', body).onclick = done;
+    }, 'Generating…');
+    $('#modalClose').onclick = () => { if (made) done(); else closeModal(); };
+  }
+
   // ---------- Settings ----------
   async function settingsPage() {
     const s = await api('/settings');
@@ -545,6 +568,10 @@
             <label>Groq model<input id="groq_model" value="${esc(s.groq_model)}" placeholder="openai/gpt-oss-120b"></label></div>
           <label>Editing instructions (leave empty for the default)<textarea id="ai_prompt" rows="7" placeholder="${esc(s.default_prompt)}">${esc(s.ai_prompt)}</textarea></label>
           <div class="row"><button class="btn" data-testai="gemini">Test Gemini</button><button class="btn" data-testai="groq">Test Groq</button></div>
+          <h3 style="margin-top:16px">AI images</h3>
+          <label>Image model (Cloudflare Workers AI)<input id="image_model" value="${esc(s.image_model)}" placeholder="@cf/black-forest-labs/flux-1-schnell"></label>
+          <label>Style added to every picture<input id="image_style" value="${esc(s.image_style)}"></label>
+          <p class="muted" style="font-size:12px;margin:0">Cloudflare ${s.env.image ? 'is set up' : '<strong style="color:var(--danger)">not set up</strong> (CF_ACCOUNT_ID and CF_API_TOKEN in .env)'}</p>
           <p class="muted" style="font-size:12px;margin:8px 0 0">Keys in .env: Gemini ${s.env.gemini ? 'set' : '<strong style="color:var(--danger)">missing</strong> (GEMINI_API_KEY)'} · Groq ${s.env.groq ? 'set' : '<strong style="color:var(--danger)">missing</strong> (GROQ_API_KEY)'}</p></div>
         <div class="card"><h3>WordPress</h3>
           <label>Site URL<input id="wp_url" value="${esc(s.wp_url)}"></label>
@@ -562,7 +589,7 @@
           <p class="muted" style="margin:0 0 8px">Upload limit: ${esc(s.env.uploadLimit)} (change it in hPanel → PHP Configuration if needed).</p>
           <p class="muted" style="margin:0">Background job (reminders, AI queue) last ran: ${s.env.cron === 'never' ? '<strong style="color:var(--danger)">never — add the Cron Job (see README)</strong>' : esc(s.env.cron)}</p></div>
       </div>`;
-    const ids = ['review_days', 'review_cc', 'email_from_name', 'ai_provider', 'gemini_model', 'groq_model', 'ai_prompt', 'wp_url', 'wp_user', 'wp_app_password', 'wp_layout', 'folder_template'];
+    const ids = ['review_days', 'review_cc', 'email_from_name', 'ai_provider', 'gemini_model', 'groq_model', 'ai_prompt', 'image_model', 'image_style', 'wp_url', 'wp_user', 'wp_app_password', 'wp_layout', 'folder_template'];
     const collect = () => Object.fromEntries([...ids.map((k) => [k, $('#' + k).value]), ['crop_featured', $('#crop_featured').checked ? '1' : '0'], ['folder_sections', $('#folder_sections').checked ? '1' : '0'], ['ai_fallback', $('#ai_fallback').checked ? '1' : '0']]);
     $('#saveSet').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); toast('Settings saved'); settingsPage(); });
     $('#testMail').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); const r = await api('/settings/test-email', { method: 'POST', body: { to: $('#testTo').value } }); toast(`Test email sent${r.cc.length ? ` (CC ${r.cc.join(', ')})` : ''}`); });

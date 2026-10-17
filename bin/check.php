@@ -24,6 +24,8 @@ $g = (bool) Config::get('GEMINI_API_KEY');
 $q = (bool) Config::get('GROQ_API_KEY');
 $line($g || $q, 'AI key: ' . ($g ? 'GEMINI_API_KEY set' : 'no GEMINI_API_KEY') . ', ' . ($q ? 'GROQ_API_KEY set' : 'no GROQ_API_KEY') . ($g || $q ? '' : ' - set at least one'));
 
+echo '  info ' . (AiImage::configured() ? 'AI images: Cloudflare configured' : 'AI images: not set up (optional - CF_ACCOUNT_ID / CF_API_TOKEN)') . "\n";
+
 try {
     Migrate::run();
     $line(true, 'database connected, tables ready (' . Db::val('SELECT COUNT(*) FROM users') . ' user(s))');

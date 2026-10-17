@@ -17,6 +17,8 @@ final class Settings
             'ai_prompt' => '',
             'ai_provider' => in_array(Config::get('AI_PROVIDER'), ['gemini', 'groq'], true) ? (string) Config::get('AI_PROVIDER') : (Config::get('GEMINI_API_KEY') || !Config::get('GROQ_API_KEY') ? 'gemini' : 'groq'),
             'ai_fallback' => '1',
+            'image_model' => '@cf/black-forest-labs/flux-1-schnell',
+            'image_style' => 'Editorial magazine illustration, natural colours, high detail, no text, no watermark',
             'groq_model' => (string) Config::get('GROQ_MODEL', 'openai/gpt-oss-120b'),
             'wp_url' => rtrim((string) Config::get('WP_URL', 'https://readthemissinglink.net'), '/'),
             'wp_user' => (string) Config::get('WP_USER', ''),
