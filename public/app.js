@@ -188,7 +188,7 @@
       };
       const acts = {
         process: async () => showProcessResult(await api(`/editions/${ed.id}/process`, { method: 'POST' }), ed.id),
-        ai: async () => { const r = await api(`/editions/${ed.id}/ai-review-all`, { method: 'POST' }); toast(`AI review started for ${r.queued} article(s) — this page updates automatically`); },
+        ai: async () => { const r = await api(`/editions/${ed.id}/ai-review-all`, { method: 'POST' }); toast(r.queued ? `${r.queued} article(s) queued for AI review — they are edited one by one and this page updates automatically` : 'No Raw articles to review'); },
         send: async () => { const r = await api(`/editions/${ed.id}/send-reviews`, { method: 'POST' }); toast(r.articles ? `Sent ${r.sent} review email(s) for ${r.articles} article(s)${r.failed.length ? `, ${r.failed.length} failed` : ''}` : 'No AI-edited articles with reviewers yet — add reviewers first', !r.articles || !!r.failed.length); },
         compile: async () => { const r = await api(`/editions/${ed.id}/compile`, { method: 'POST', body: { onlyApproved: true } }); toast(`${r.moved} approved article(s) moved to Compiled`); },
       };
@@ -274,7 +274,7 @@
     const sendFiles = async (list) => {
       if (!list.length) return;
       const fd = new FormData();
-      [...list].forEach((x) => fd.append('files', x));
+      [...list].forEach((x) => fd.append('files[]', x));
       const dz = $('#dzF');
       dz.innerHTML = '<span class="spin"></span> Uploading…';
       try { const r = await api(`/folders/${selId}/files`, { method: 'POST', form: fd }); toast(`${r.saved.length} file(s) saved in ${f.name}`); reload(); } catch (e) { toast(e.message, true); dz.textContent = 'Drop files here — Word, PDF, JPG, PNG…'; }
@@ -302,7 +302,7 @@
     $('#regen')?.addEventListener('click', (e) => busy(e.target, async () => { const r = await api(`/editions/${id}/folders/generate`, { method: 'POST' }); toast(r.created ? `${r.created} missing folder(s) added` : 'All folders are in place'); reload(); }));
     $$('.attach').forEach((s) => { s.onchange = async () => { if (!s.value) return; try { await api(`/files/${s.dataset.file}/attach`, { method: 'POST', body: { article_id: s.value } }); toast('Attached to the article'); reload(); } catch (e) { toast(e.message, true); } }; });
     $$('[data-rm]').forEach((b) => { b.onclick = async () => { if (!confirm('Remove this file from the folder? It stays saved on the server.')) return; try { await api(`/files/${b.dataset.rm}/waiting`, { method: 'DELETE' }); reload(); } catch (e) { toast(e.message, true); } }; });
-    if (ed.articles.some((a) => a.status === 'reviewing')) poller = setInterval(() => { if (location.hash.startsWith(`#/edition/${id}`)) reload(); }, 8000);
+    if (ed.articles.some((a) => a.status === 'reviewing' || +a.ai_queued)) poller = setInterval(() => { if (location.hash.startsWith(`#/edition/${id}`)) reload(); }, 8000);
   }
 
   // ---------- Issue: pipeline board ----------
@@ -319,6 +319,7 @@
     const card = (a) => {
       const chips = [];
       if (a.status === 'reviewing') chips.push('<span class="badge" style="color:var(--reviewing)"><span class="spin"></span> AI editing</span>');
+      else if (+a.ai_queued && a.status === 'raw') chips.push('<span class="badge" style="color:var(--reviewing)">Queued for AI</span>');
       if (a.ai_error) chips.push('<span class="badge bad">AI error</span>');
       chips.push(`<span class="badge">${a.image_count} photo${a.image_count == 1 ? '' : 's'}</span>`);
       if (a.reviewer_count) chips.push(`<span class="badge ${a.changes_count ? 'bad' : a.approved_count == a.reviewer_count ? 'ok' : 'warn'}">${a.approved_count}/${a.reviewer_count} approved</span>`);
@@ -338,7 +339,7 @@
     $('#secFilter').onchange = (e) => { sessionStorage.setItem('secFilter', e.target.value); edition(id); };
     $('#uploadBtn').onclick = () => uploadModal(id);
     $('#newBtn').onclick = () => newArticleModal(id);
-    if (ed.articles.some((a) => a.status === 'reviewing')) poller = setInterval(() => { if (location.hash === `#/edition/${id}/board`) edition(id); }, 6000);
+    if (ed.articles.some((a) => a.status === 'reviewing' || +a.ai_queued)) poller = setInterval(() => { if (location.hash === `#/edition/${id}/board`) edition(id); }, 6000);
   }
 
   function uploadModal(editionId) {
@@ -363,7 +364,7 @@
     $('#upGo', body).onclick = (e) => busy(e.target, async () => {
       if (!files.length) throw new Error('Choose at least one file');
       const fd = new FormData();
-      files.forEach((f) => fd.append('files', f));
+      files.forEach((f) => fd.append('files[]', f));
       fd.append('section_id', $('#upSec', body).value);
       fd.append('author_name', $('#upAuthor', body).value);
       fd.append('mode', $('#upMode', body).value);
@@ -498,7 +499,7 @@
     $('#addImg').onclick = () => $('#imgIn').click();
     $('#imgIn').onchange = async (e) => {
       const fd = new FormData();
-      [...e.target.files].forEach((f) => fd.append('files', f));
+      [...e.target.files].forEach((f) => fd.append('files[]', f));
       try { if (dirty) await save(true); await api(`/articles/${id}/files`, { method: 'POST', form: fd }); toast('Files added'); article(id); } catch (err) { toast(err.message, true); }
     };
     $$('[data-feat]').forEach((b) => { b.onclick = async () => { if (dirty) await save(true); await api(`/articles/${id}`, { method: 'PUT', body: { featured_file_id: Number(b.dataset.feat) } }); article(id); }; });
@@ -553,7 +554,9 @@
           <p class="muted" style="font-size:12px;margin-top:-6px">Stages: <code>raw</code> (files are gathered here), <code>edited</code>, <code>in_review</code>, <code>compiled</code>, <code>published</code> (final / WordPress). A line without <code>= stage</code> makes a plain folder.</p>
           <label><input type="checkbox" id="folder_sections" ${s.folder_sections === '1' ? 'checked' : ''} style="display:inline;width:auto;margin-right:6px">Add a folder for each section inside every folder</label>
           <p class="muted" style="font-size:12px;margin:0">Existing issues get missing folders with the <strong>Sync</strong> button on their folder tree. Folders are never deleted.</p></div>
-        <div class="card"><h3>Storage</h3><p class="muted" style="margin:0">Uploads are stored in <code>${esc(s.env.storageDir)}</code>. Keep this folder outside the app folder so deployments never touch it, and include it in backups.</p></div>
+        <div class="card"><h3>Server</h3><p class="muted" style="margin:0 0 8px">Uploads are stored in <code>${esc(s.env.storageDir)}</code>. Keep this folder outside the web folder and include it in backups.</p>
+          <p class="muted" style="margin:0 0 8px">Upload limit: ${esc(s.env.uploadLimit)} (change it in hPanel → PHP Configuration if needed).</p>
+          <p class="muted" style="margin:0">Background job (reminders, AI queue) last ran: ${s.env.cron === 'never' ? '<strong style="color:var(--danger)">never — add the Cron Job (see README)</strong>' : esc(s.env.cron)}</p></div>
       </div>`;
     const ids = ['review_days', 'review_cc', 'email_from_name', 'gemini_model', 'ai_prompt', 'wp_url', 'wp_user', 'wp_app_password', 'wp_layout', 'folder_template'];
     const collect = () => Object.fromEntries([...ids.map((k) => [k, $('#' + k).value]), ['crop_featured', $('#crop_featured').checked ? '1' : '0'], ['folder_sections', $('#folder_sections').checked ? '1' : '0']]);

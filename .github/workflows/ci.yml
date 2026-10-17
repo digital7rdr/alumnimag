@@ -8,10 +8,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: shivammathur/setup-php@v2
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: node --check server.js && node --check public/app.js
+          php-version: '8.2'
+          extensions: pdo_mysql, curl, zip, gd, dom, mbstring
+      - name: Lint
+        run: for f in app/*.php bin/*.php public/index.php tests/*.php; do php -l "$f" || exit 1; done
+      - name: Tests
+        run: php tests/run.php

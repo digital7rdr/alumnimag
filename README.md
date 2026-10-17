@@ -4,6 +4,9 @@ Editorial dashboard for the alumni magazine, served at **drive.readthemissinglin
 It replaces the Google Drive pipeline: articles, photos and reviewers live in MySQL and on the
 server's disk, the AI review runs on Google Gemini, and finished articles go to WordPress as drafts.
 
+It is plain PHP 8.1+ with MySQL, so it runs on ordinary Hostinger shared hosting (no Node.js needed).
+All libraries are included in the repository (PHPMailer, smalot/pdfparser, Quill) — no Composer or npm step.
+
 ## Library: Year › Issue › folders
 
 An administrator creates each issue under **Library** (year + issue name). Its folder tree is
@@ -58,33 +61,56 @@ Accepted files: `.docx .doc .pdf .jpg .jpeg .png .gif .webp .txt .md .rtf .odt` 
 - **"Already imported" after deleting a WordPress post** — the draft is updated if it still exists, otherwise recreated.
 - **Duplicate small/large photo** — the featured image is a separate 1200×600 crop; inline photos keep full size.
 - **Review date 7 days** — now 2 days (Settings → Review workflow).
-- **PM2 cluster restart loop / lock-file CI failures** — fork mode, committed `package-lock.json`, CI runs `npm ci && npm test`.
+- **PM2 restart loops / lock-file CI failures** — no long-running process to crash; PHP runs per request and a cron job does the background work.
 
-## Setup
+## Folders on the server
 
-1. **Database** — the app creates its own tables on first start (MySQL 5.7+/MariaDB 10.3+).
-2. **Environment** — copy `.env.example` to `.env` and fill it in. Keep `STORAGE_DIR` *outside* the app folder
-   (e.g. `/home/u604557415/alumnimag-storage`) so redeploys never touch uploaded files, and include it in backups.
-3. **Gmail** — on alumnikarunya@gmail.com create an App Password (Google Account → Security → App passwords)
-   and put it in `SMTP_PASS`.
-4. **WordPress** — on an administrator account go to *Users → Profile → Application Passwords*, create one,
-   and enter the username and password in *Settings → WordPress* (or in `.env`).
-   Copy `wordpress/tml-bridge.php` to `wp-content/mu-plugins/` so drafts get the Divi layout settings.
-5. **Install and start**
+```
+~/alumnimag/                          app code (this repository) + .env      <- private
+~/alumnimag-storage/                  uploaded files and the issue folders   <- private, back this up
+~/domains/readthemissinglink.net/public_html/drive/   web folder: a copy of public/ made by bin/deploy.sh
+```
+
+Only `public/` is web-facing. `bin/deploy.sh` copies it into the subdomain's web folder and writes
+`app-root.php`, which tells it where the private code lives.
+
+## Install on Hostinger (shared hosting)
+
+1. **Code** — clone the repository to `~/alumnimag` (see the deploy key steps in the project notes) and
+   `cp .env.example .env`, then fill in `.env`. The database tables are created automatically.
+2. **PHP version** — hPanel → drive.readthemissinglink.net → *PHP Configuration*: choose PHP 8.2 or newer.
+   On the same page raise `upload_max_filesize` (e.g. 64M) and `post_max_size` (e.g. 256M) if large uploads fail.
+3. **Deploy**
    ```bash
-   npm ci
-   npm start            # listens on $PORT
+   cd ~/alumnimag && bash bin/deploy.sh
    ```
-   On Hostinger's Node.js hosting, point the app at this repository, use `server.js` as the entry file,
-   and add the `.env` values as environment variables. On a VPS use `pm2 start ecosystem.config.js`.
-6. Sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, then add editors under *Users*.
+   It copies the web files, removes Hostinger's `default.php`, and runs `bin/check.php`
+   (PHP extensions, `.env` values, database, storage folder). Every line should say `ok`.
+4. **Cron job** (reminders after the 2-day deadline, "AI review all" queue) — hPanel → *Advanced → Cron Jobs*,
+   every 5 minutes:
+   ```
+   /usr/bin/php /home/u604557415/alumnimag/bin/cron.php
+   ```
+   (Use the PHP path shown by `which php` over SSH if different.) Settings → *Server* shows when it last ran.
+5. **Gmail** — on alumnikarunya@gmail.com create an App Password (Google Account → Security → App passwords)
+   and put it in `SMTP_PASS`.
+6. **WordPress** — on an administrator account go to *Users → Profile → Application Passwords*, create one,
+   and enter the username and password in *Settings → WordPress*.
+   Copy `wordpress/tml-bridge.php` to `wp-content/mu-plugins/` so drafts get the Divi layout settings.
+7. Open https://drive.readthemissinglink.net, sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, add editors under *Users*.
+
+### Updating
+
+```bash
+cd ~/alumnimag && git pull && bash bin/deploy.sh
+```
 
 ## Development
 
 ```bash
-npm install
-npm test        # unit tests
-npm run dev     # auto-restart on change
+php tests/run.php                                   # unit tests (no database needed)
+ALUMNIMAG_ENV=/path/to/test.env php -S localhost:8080 -t public public/index.php
 ```
 
-`MAIL_TRANSPORT=json` logs emails instead of sending them; `GEMINI_BASE_URL` can point at a mock server.
+`MAIL_TRANSPORT=log` writes emails to `STORAGE_DIR/tmp/mail.log` instead of sending them;
+`GEMINI_BASE_URL` can point at a mock server.
