@@ -36,7 +36,11 @@ try {
         // Everything else is the dashboard (single-page app).
         session_write_close();
         header('Cache-Control: no-cache');
-        Http::html((string) file_get_contents(__DIR__ . '/index.html'));
+        // Version the script/style links so browsers fetch the new files right after every update.
+        $v = static fn (string $f) => is_file(__DIR__ . "/$f") ? substr(md5((string) filemtime(__DIR__ . "/$f") . filesize(__DIR__ . "/$f")), 0, 10) : '1';
+        $page = (string) file_get_contents(__DIR__ . '/index.html');
+        $page = str_replace(['"/app.js"', '"/app.css"'], ['"/app.js?v=' . $v('app.js') . '"', '"/app.css?v=' . $v('app.css') . '"'], $page);
+        Http::html($page);
     }
 } catch (Throwable $e) {
     $status = $e instanceof WpError ? 502 : ($e instanceof AppError ? $e->getCode() : 500);
