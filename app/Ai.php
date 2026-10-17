@@ -176,6 +176,9 @@ TXT;
             Db::exec('INSERT INTO article_versions (article_id, label, title, html, user_id) VALUES (?, ?, ?, ?, ?)', [$articleId, 'AI edit (' . $who . ')', $title, $body, $userId]);
             Activity::log($articleId, (int) $art['edition_id'], $userId, 'ai_review', "$who: " . count($t['ids']) . ' image(s) preserved');
             Folders::afterStageChange($articleId);
+            if (Settings::get('auto_assign_reviewers') === '1' && !Db::one('SELECT id FROM reviewers WHERE article_id = ?', [$articleId])) {
+                try { Reviews::assignFromSection($articleId, $userId); } catch (Throwable $e) { error_log('[ai] assign reviewers: ' . $e->getMessage()); }
+            }
             return ['ok' => true, 'title' => $title, 'imagesPreserved' => count($t['ids']), 'restored' => count($restored['restored']), 'provider' => $who];
         } catch (Throwable $e) {
             Db::exec('UPDATE articles SET status = ?, ai_error = ?, ai_started_at = NULL WHERE id = ?', [$art['status'], mb_substr($e->getMessage(), 0, 1000), $articleId]);

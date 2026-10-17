@@ -164,6 +164,29 @@ CREATE TABLE IF NOT EXISTS activity (
 SQL,
     ];
 
+    private const TABLES_V4 = [
+        "CREATE TABLE IF NOT EXISTS people (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(150) NOT NULL,
+            email VARCHAR(190) NULL,
+            batch VARCHAR(60) NULL,
+            linkedin VARCHAR(300) NULL,
+            phone VARCHAR(40) NULL,
+            roles VARCHAR(120) NOT NULL DEFAULT '',
+            notes TEXT NULL,
+            active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_email (email),
+            KEY idx_name (name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+        "CREATE TABLE IF NOT EXISTS section_people (
+            section_id INT NOT NULL,
+            person_id INT NOT NULL,
+            role VARCHAR(20) NOT NULL,
+            PRIMARY KEY (section_id, person_id, role)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4",
+    ];
+
     private static function addColumn(string $table, string $column, string $ddl): void
     {
         $has = Db::val('SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$table, $column]);
@@ -178,6 +201,9 @@ SQL,
         self::addColumn('articles', 'ai_queued', 'TINYINT(1) NOT NULL DEFAULT 0');
         self::addColumn('articles', 'ai_started_at', 'DATETIME NULL');
         self::addColumn('articles', 'ai_prev_status', 'VARCHAR(20) NULL');
+        foreach (self::TABLES_V4 as $sql) Db::exec($sql);
+        self::addColumn('reviewers', 'person_id', 'INT NULL');
+        self::addColumn('reviewers', 'round', 'TINYINT NOT NULL DEFAULT 1');
         $len = Db::val("SELECT CHARACTER_MAXIMUM_LENGTH FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'files' AND COLUMN_NAME = 'stored_name'");
         if ($len !== null && (int) $len < 700) Db::exec('ALTER TABLE files MODIFY stored_name VARCHAR(700) NOT NULL');
 

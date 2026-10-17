@@ -37,6 +37,19 @@ its text, photos and original files is written into that stage folder on the ser
 Any folder can be downloaded as a ZIP. The folder list is set in *Settings → Issue folder structure*
 (`Folder name = stage`, one per line); *Sync* on an issue adds folders that are missing.
 
+## People and reviewers
+
+*People* holds everyone involved — reviewers, section owners, contributors and team — with email, batch, LinkedIn and phone.
+Admins add people by hand or **Import from Excel** (.xlsx or CSV): sheets named Editors/Reviewers, Team and
+Contributors/Authors are read (or any sheet with Name + Email columns), and a Status sheet with a *Section owners*
+column sets each section's owners. Re-importing updates people instead of duplicating them.
+
+*People → Section reviewers* sets, per section, the **owners** (copied on that section's review emails) and the default
+**Reviewer 1** and **Reviewer 2**. After an article's AI review those people are added automatically (the author is
+skipped). Review emails go to round 1 first; round 2 is emailed automatically when everyone in round 1 approves.
+A reviewer who asks for changes can be sent the updated article again with **Resend**. Articles move to Compiled
+only when every reviewer in both rounds has approved.
+
 ## Workflow
 
 | Stage | What happens | Who |

@@ -172,7 +172,7 @@ final class Api
                 if (!$a) throw new AppError('Article not found', 404);
                 $a['files'] = Db::q('SELECT id, kind, original_name, mime, size, origin, sort_order, wp_media_id, created_at FROM files WHERE article_id = ? ORDER BY kind, sort_order, id', [$a['id']]);
                 $a['versions'] = Db::q('SELECT v.id, v.label, v.title, v.created_at, u.name AS user_name FROM article_versions v LEFT JOIN users u ON u.id = v.user_id WHERE v.article_id = ? ORDER BY v.id DESC', [$a['id']]);
-                $a['reviewers'] = Db::q('SELECT id, name, email, status, sent_at, due_at, reminded_at, responded_at, comments FROM reviewers WHERE article_id = ? ORDER BY id', [$a['id']]);
+                $a['reviewers'] = Db::q('SELECT id, person_id, round, name, email, status, sent_at, due_at, reminded_at, responded_at, comments FROM reviewers WHERE article_id = ? ORDER BY round, id', [$a['id']]);
                 $a['activity'] = Db::q('SELECT ac.*, u.name AS user_name FROM activity ac LEFT JOIN users u ON u.id = ac.user_id WHERE ac.article_id = ? ORDER BY ac.id DESC LIMIT 50', [$a['id']]);
                 Http::json($a);
             }, false],
@@ -266,16 +266,22 @@ final class Api
             }, true],
 
             // ---------- Reviewers ----------
-            ['GET', '/editions/(\d+)/reviewers', fn ($b, $id) => Http::json(Db::q('SELECT r.id, r.name, r.email, r.status, r.sent_at, r.due_at, r.reminded_at, r.responded_at, r.comments, r.article_id, a.title AS article_title
-                FROM reviewers r LEFT JOIN articles a ON a.id = r.article_id WHERE r.edition_id = ? ORDER BY a.title, r.name', [$id])), false],
+            ['GET', '/editions/(\d+)/reviewers', fn ($b, $id) => Http::json(Db::q('SELECT r.id, r.round, r.name, r.email, r.status, r.sent_at, r.due_at, r.reminded_at, r.responded_at, r.comments, r.article_id, a.title AS article_title
+                FROM reviewers r LEFT JOIN articles a ON a.id = r.article_id WHERE r.edition_id = ? ORDER BY a.title, r.round, r.name', [$id])), false],
             ['POST', '/articles/(\d+)/reviewers', function ($b, $id) {
                 $a = Db::one('SELECT * FROM articles WHERE id = ?', [$id]);
                 if (!$a) throw new AppError('Article not found', 404);
-                $name = trim((string) ($b['name'] ?? ''));
-                $email = trim((string) ($b['email'] ?? ''));
-                if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) throw new AppError('Reviewer name and a valid email are required');
-                Http::json(['id' => Reviews::add((int) $a['edition_id'], (int) $a['id'], $name, $email)]);
+                $pid = (int) ($b['person_id'] ?? 0) ?: null;
+                Http::json(['id' => Reviews::add((int) $a['edition_id'], (int) $a['id'], (string) ($b['name'] ?? ''), (string) ($b['email'] ?? ''), $pid, (int) ($b['round'] ?? 1))]);
             }, false],
+            ['POST', '/articles/(\d+)/reviewers/from-section', fn ($b, $id) => Http::json(Reviews::assignFromSection((int) $id, self::uid())), false],
+            ['POST', '/reviewers/(\d+)/resend', function ($b, $id) {
+                $r = Db::one('SELECT * FROM reviewers WHERE id = ?', [$id]);
+                if (!$r || !$r['article_id']) throw new AppError('Reviewer not found', 404);
+                Db::exec("UPDATE reviewers SET status = 'pending' WHERE id = ?", [$id]);
+                Http::json(Reviews::sendForArticle((int) $r['article_id'], self::uid(), [(int) $id]));
+            }, false],
+            // Bulk add: one line per reviewer "Name, email, Article title[, round]" (email may be left out for people already in People)
             ['POST', '/editions/(\d+)/reviewers/import', function ($b, $id) {
                 $arts = Db::q('SELECT id, title FROM articles WHERE edition_id = ?', [$id]);
                 $out = ['added' => 0, 'skipped' => []];
@@ -283,14 +289,25 @@ final class Api
                     $line = trim($line);
                     if ($line === '') continue;
                     $parts = array_map('trim', preg_split('/\t|,/', $line));
-                    [$name, $email] = [$parts[0] ?? '', $parts[1] ?? ''];
-                    $title = mb_strtolower(trim(implode(',', array_slice($parts, 2))));
+                    $name = $parts[0] ?? '';
+                    $rest = array_slice($parts, 1);
+                    $email = '';
+                    if ($rest && filter_var($rest[0], FILTER_VALIDATE_EMAIL)) $email = array_shift($rest);
+                    $round = 1;
+                    if ($rest && preg_match('/^(?:round\s*)?([12])$/i', (string) end($rest), $m)) { $round = (int) $m[1]; array_pop($rest); }
+                    $title = mb_strtolower(trim(implode(',', $rest)));
                     $art = null;
                     foreach ($arts as $x) if (mb_strtolower($x['title']) === $title) { $art = $x; break; }
                     if (!$art && $title !== '') foreach ($arts as $x) if (str_contains(mb_strtolower($x['title']), $title)) { $art = $x; break; }
-                    if ($name === '' || !filter_var($email, FILTER_VALIDATE_EMAIL) || !$art) { $out['skipped'][] = $line; continue; }
-                    Reviews::add((int) $id, (int) $art['id'], $name, $email);
-                    $out['added']++;
+                    $pid = null;
+                    if ($email === '' && $name !== '') { $p = People::matchName($name); if ($p && $p['email']) { $pid = (int) $p['id']; } }
+                    try {
+                        if (!$art) throw new AppError('article not found');
+                        Reviews::add((int) $id, (int) $art['id'], $name, $email, $pid, $round);
+                        $out['added']++;
+                    } catch (Throwable $e) {
+                        $out['skipped'][] = "$line - " . $e->getMessage();
+                    }
                 }
                 Http::json($out);
             }, false],
@@ -313,6 +330,20 @@ final class Api
                 }
                 Http::json($out);
             }, false],
+
+            // ---------- People and section reviewers ----------
+            ['GET', '/people', fn () => Http::json(People::list(trim((string) ($_GET['q'] ?? '')), (string) ($_GET['role'] ?? ''))), false],
+            ['POST', '/people', fn ($b) => Http::json(People::save(null, $b)), true],
+            ['PUT', '/people/(\d+)', fn ($b, $id) => Http::json(People::save((int) $id, $b)), true],
+            ['DELETE', '/people/(\d+)', function ($b, $id) { People::delete((int) $id); Http::json(['ok' => true]); }, true],
+            ['POST', '/people/import', function () {
+                $f = $_FILES['file'] ?? null;
+                if (!$f || (int) $f['error'] !== UPLOAD_ERR_OK) throw new AppError('Choose an Excel (.xlsx) or CSV file');
+                @set_time_limit(300);
+                Http::json(People::import($f['tmp_name'], (string) $f['name'], self::uid()));
+            }, true],
+            ['GET', '/section-people', fn () => Http::json(People::sectionConfig()), false],
+            ['PUT', '/sections/(\d+)/people', function ($b, $id) { People::setSection((int) $id, $b); Http::json(['ok' => true]); }, true],
 
             // ---------- Settings / users (admin) ----------
             ['GET', '/settings', fn () => Http::json(Settings::publicView() + ['default_prompt' => Ai::DEFAULT_PROMPT, 'env' => [

@@ -19,6 +19,8 @@ final class Settings
             'ai_fallback' => '1',
             'image_model' => '@cf/black-forest-labs/flux-1-schnell',
             'image_style' => 'Editorial magazine illustration, natural colours, high detail, no text, no watermark',
+            'auto_assign_reviewers' => '1',
+            'cc_section_owners' => '1',
             'groq_model' => (string) Config::get('GROQ_MODEL', 'openai/gpt-oss-120b'),
             'wp_url' => rtrim((string) Config::get('WP_URL', 'https://readthemissinglink.net'), '/'),
             'wp_user' => (string) Config::get('WP_USER', ''),

@@ -50,9 +50,13 @@ final class Mailer
     }
 
     /** Every review notification CCs the editorial inbox (default alumnikarunya@gmail.com). */
-    public static function sendReviewMail(string $to, string $subject, string $html, string $text = ''): array
+    public static function sendReviewMail(string $to, string $subject, string $html, string $text = '', array $extraCc = []): array
     {
-        $cc = array_values(array_filter(self::splitList(Settings::get('review_cc')), fn ($a) => strtolower($a) !== strtolower($to)));
+        $cc = [];
+        foreach (array_merge(self::splitList(Settings::get('review_cc')), $extraCc) as $a) {
+            $a = strtolower(trim($a));
+            if ($a !== '' && $a !== strtolower($to) && !in_array($a, $cc, true)) $cc[] = $a;
+        }
         $from = (string) Config::get('SMTP_FROM', (string) Config::get('SMTP_USER', ''));
         self::send([$to], $cc, $subject, $html, $text, $cc[0] ?? $from);
         return ['cc' => $cc];

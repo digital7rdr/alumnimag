@@ -4,7 +4,7 @@
 declare(strict_types=1);
 
 define('APP_ROOT', dirname(__DIR__));
-define('SCHEMA_VERSION', 3);
+define('SCHEMA_VERSION', 4);
 
 spl_autoload_register(function (string $class): void {
     $map = [
@@ -28,7 +28,7 @@ class AppError extends RuntimeException
     }
 }
 
-foreach (['Config', 'Db', 'Settings', 'Storage', 'Html', 'Docx', 'Intake', 'Ai', 'AiImage', 'Mailer', 'Reviews', 'Wp', 'Folders', 'Migrate', 'Http', 'Api', 'PublicPages'] as $m) {
+foreach (['Config', 'Db', 'Settings', 'Storage', 'Html', 'Docx', 'Intake', 'Ai', 'AiImage', 'Mailer', 'Reviews', 'Wp', 'Folders', 'People', 'Xlsx', 'Migrate', 'Http', 'Api', 'PublicPages'] as $m) {
     require __DIR__ . "/$m.php";
 }
 

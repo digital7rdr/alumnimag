@@ -89,12 +89,14 @@
     [/^#\/article\/(\d+)$/, article],
     [/^#\/settings$/, settingsPage],
     [/^#\/users$/, usersPage],
+    [/^#\/people$/, () => peoplePage('people')],
+    [/^#\/people\/sections$/, () => peoplePage('sections')],
   ];
   async function route() {
     if (!me) return;
     if (poller) { clearInterval(poller); poller = null; }
     const h = location.hash || '#/';
-    $$('.sidebar nav a').forEach((a) => a.classList.toggle('active', h === a.getAttribute('href') || (a.dataset.nav === 'editions' && /edition|article/.test(h))));
+    $$('.sidebar nav a').forEach((a) => a.classList.toggle('active', h === a.getAttribute('href') || (a.dataset.nav === 'editions' && /edition|article/.test(h)) || (a.dataset.nav === 'people' && /^#\/people/.test(h))));
     for (const [re, fn] of routes) {
       const m = h.match(re);
       if (m) {
@@ -398,16 +400,16 @@
     const head = issueHead(ed, 'reviewers');
     view.innerHTML = `${head.html}
       <div class="card"><h3>Add reviewers in bulk</h3>
-        <p class="muted" style="margin-top:0">One per line: <code>Name, email, Article title</code> (you can paste straight from a spreadsheet).</p>
-        <textarea id="bulk" rows="5" placeholder="Regi Thomas, regi@example.com, The Fine Print of Everyday Life"></textarea>
+        <p class="muted" style="margin-top:0">One per line: <code>Name, email, Article title, round</code>. The email can be left out for people already in <a href="#/people">People</a>; round is 1 or 2 (default 1). You can paste straight from a spreadsheet.</p>
+        <textarea id="bulk" rows="5" placeholder="Regi Thomas, regi@example.com, The Fine Print of Everyday Life&#10;Nivitha Nixon, Kilimanjaro Write up, 2"></textarea>
         <div class="row" style="margin-top:8px"><span class="grow"></span><button class="btn primary" id="bulkGo">Add reviewers</button></div></div>
-      <div class="card"><h3>All reviewers (${list.length})</h3>${list.length ? `<table><thead><tr><th>Reviewer</th><th>Article</th><th>Status</th><th>Comments</th></tr></thead><tbody>
-        ${list.map((r) => `<tr><td><strong>${esc(r.name)}</strong><div class="muted">${esc(r.email)}</div></td><td>${r.article_id ? `<a href="#/article/${r.article_id}">${esc(r.article_title)}</a>` : '—'}</td><td>${st(r)}${r.reminded_at ? '<div class="muted" style="font-size:12px">reminder sent</div>' : ''}</td><td style="max-width:280px">${esc(r.comments || '')}</td></tr>`).join('')}
+      <div class="card"><h3>All reviewers (${list.length})</h3>${list.length ? `<table><thead><tr><th>Reviewer</th><th>Round</th><th>Article</th><th>Status</th><th>Comments</th></tr></thead><tbody>
+        ${list.map((r) => `<tr><td><strong>${esc(r.name)}</strong><div class="muted">${esc(r.email)}</div></td><td>${r.round}</td><td>${r.article_id ? `<a href="#/article/${r.article_id}">${esc(r.article_title)}</a>` : '—'}</td><td>${st(r)}${r.reminded_at ? '<div class="muted" style="font-size:12px">reminder sent</div>' : ''}</td><td style="max-width:280px">${esc(r.comments || '')}</td></tr>`).join('')}
       </tbody></table>` : '<p class="muted">No reviewers yet. Add them here or on each article.</p>'}</div>`;
     head.wire(() => editionReviewers(id));
     $('#bulkGo').onclick = (e) => busy(e.target, async () => {
       const r = await api(`/editions/${id}/reviewers/import`, { method: 'POST', body: { text: $('#bulk').value } });
-      toast(`${r.added} reviewer(s) added${r.skipped.length ? `, ${r.skipped.length} line(s) skipped (check the article title)` : ''}`, !!r.skipped.length);
+      toast(`${r.added} reviewer(s) added${r.skipped.length ? ` · skipped: ${r.skipped.join(' | ')}` : ''}`, !!r.skipped.length);
       editionReviewers(id);
     });
   }
@@ -415,7 +417,7 @@
   // ---------- Article ----------
   let quill = null;
   async function article(id) {
-    const a = await api(`/articles/${id}`);
+    const [a, people] = await Promise.all([api(`/articles/${id}`), api('/people?role=reviewer').catch(() => [])]);
     const images = a.files.filter((f) => f.kind === 'image');
     const others = a.files.filter((f) => f.kind !== 'image');
     const current = a.status === 'raw' || a.status === 'reviewing' ? a.raw_html : (a.edited_html || a.raw_html);
@@ -453,11 +455,13 @@
             ${images.length ? `<div class="gallery">${images.map((f) => `<div class="thumb ${a.featured_file_id === f.id ? 'featured' : ''}">${a.featured_file_id === f.id ? '<span class="star">FEATURED</span>' : ''}<img src="/files/${f.id}" loading="lazy" alt="${esc(f.original_name)}"><div class="acts"><button data-feat="${f.id}">Feature</button><button data-ins="${f.id}">Insert</button></div></div>`).join('')}</div>
             <p class="muted" style="font-size:12px;margin:8px 0 0">Featured photo becomes the 1200×600 WordPress image. Photos are never deleted when the article moves between stages.</p>` : '<p class="muted" style="margin:0">No photos yet.</p>'}
             <input type="file" id="imgIn" multiple hidden accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.docx"></div>
-          <div class="card"><h3>Reviewers (${a.reviewers.length})</h3>
-            ${a.reviewers.map((r) => `<div class="list-row" style="padding:8px 0"><div><strong>${esc(r.name)}</strong><div class="muted" style="font-size:12px">${esc(r.email)}</div>
+          <div class="card"><h3>Reviewers (${a.reviewers.length})${a.section_id ? '<button class="btn small" id="revSection" title="Add this section\'s Reviewer 1 and Reviewer 2 from People">Section reviewers</button>' : ''}</h3>
+            ${[1, 2].map((round) => { const rs = a.reviewers.filter((r) => +r.round === round); return rs.length ? `<div class="muted" style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-top:6px">Round ${round}</div>` + rs.map((r) => `<div class="list-row" style="padding:8px 0"><div><strong>${esc(r.name)}</strong><div class="muted" style="font-size:12px">${esc(r.email)}</div>
               ${r.comments ? `<div style="font-size:12.5px;margin-top:4px">“${esc(r.comments)}”</div>` : ''}</div>
-              <div style="text-align:right">${r.status === 'approved' ? '<span class="badge ok">Approved</span>' : r.status === 'changes' ? '<span class="badge bad">Changes</span>' : r.status === 'sent' ? `<span class="badge ${new Date(r.due_at) < new Date() ? 'bad' : 'warn'}">Due ${fmtDay(r.due_at)}</span>` : `<span class="badge">Not sent</span> <button class="icon-btn" title="Remove" data-delrev="${r.id}">×</button>`}</div></div>`).join('')}
-            <form id="revForm" style="margin-top:8px"><div class="grid2"><input name="name" placeholder="Name" required style="margin:0"><input name="email" type="email" placeholder="Email" required style="margin:0"></div>
+              <div style="text-align:right">${r.status === 'approved' ? '<span class="badge ok">Approved</span>' : r.status === 'changes' ? `<span class="badge bad">Changes</span><div><button class="btn small" style="margin-top:4px" data-resend="${r.id}">Resend</button></div>` : r.status === 'sent' ? `<span class="badge ${new Date(r.due_at) < new Date() ? 'bad' : 'warn'}">Due ${fmtDay(r.due_at)}</span>` : `<span class="badge">Not sent</span> <button class="icon-btn" title="Remove" data-delrev="${r.id}">×</button>`}</div></div>`).join('') : ''; }).join('')}
+            <form id="revForm" style="margin-top:10px"><input id="revWho" list="peopleList" placeholder="Type a name from People…" autocomplete="off" style="margin:0 0 6px">
+              <datalist id="peopleList">${people.filter((p) => p.email && +p.active).map((p) => `<option value="${esc(p.name)} <${esc(p.email)}>"></option>`).join('')}</datalist>
+              <div class="grid2"><input id="revEmail" type="email" placeholder="Email (only for someone new)" style="margin:0"><select id="revRound" style="margin:0"><option value="1">Round 1</option><option value="2">Round 2</option></select></div>
             <button class="btn small" style="margin-top:8px">Add reviewer</button></form></div>
           <div class="card"><h3>Files</h3>${others.length ? others.map((f) => `<div class="list-row" style="padding:6px 0"><a href="/files/${f.id}">${esc(f.original_name)}</a><span class="badge">${f.kind}</span></div>`).join('') : '<p class="muted" style="margin:0">No documents.</p>'}</div>
           <div class="card"><h3>Versions</h3>${a.versions.map((v) => `<div class="list-row" style="padding:6px 0"><div><strong>${esc(v.label)}</strong><div class="muted" style="font-size:12px">${esc(v.user_name || 'system')} · ${fmt(v.created_at)}</div></div><button class="btn small" data-ver="${v.id}">View</button></div>`).join('')}</div>
@@ -489,7 +493,7 @@
 
     const act = {
       ai: async () => { if (dirty) await save(true); toast('AI review running — this takes up to a minute'); const r = await api(`/articles/${id}/ai-review`, { method: 'POST' }); toast(`AI review done with ${r.provider} — ${r.imagesPreserved} photo(s) kept in place`); },
-      send: async () => { if (dirty) await save(true); const r = await api(`/articles/${id}/send-review`, { method: 'POST' }); toast(`Sent to ${r.sent.length} reviewer(s), due in ${r.days} day(s)${r.failed.length ? ` — ${r.failed.length} failed: ${r.failed.map((f) => f.error).join('; ')}` : ''}`, !!r.failed.length); },
+      send: async () => { if (dirty) await save(true); const r = await api(`/articles/${id}/send-review`, { method: 'POST' }); toast(`Round ${r.round}: sent to ${r.sent.length} reviewer(s), due in ${r.days} day(s)${r.failed.length ? ` — ${r.failed.length} failed: ${r.failed.map((f) => f.error).join('; ')}` : ''}`, !!r.failed.length); },
       'to-compiled': async () => { if (dirty) await save(true); await api(`/articles/${id}/stage`, { method: 'POST', body: { to: 'compiled' } }); toast('Moved to Compiled'); },
       'to-edited': async () => { await api(`/articles/${id}/stage`, { method: 'POST', body: { to: 'edited' } }); toast('Moved back to AI edited'); },
       'to-raw': async () => { if (!confirm('Go back to the original text? The edited version stays under Versions.')) return; await api(`/articles/${id}/stage`, { method: 'POST', body: { to: 'raw' } }); },
@@ -509,9 +513,20 @@
     $$('[data-delrev]').forEach((b) => { b.onclick = async () => { await api(`/reviewers/${b.dataset.delrev}`, { method: 'DELETE' }); article(id); }; });
     $('#revForm').onsubmit = async (e) => {
       e.preventDefault();
-      const f = new FormData(e.target);
-      try { await api(`/articles/${id}/reviewers`, { method: 'POST', body: { name: f.get('name'), email: f.get('email') } }); article(id); } catch (err) { toast(err.message, true); }
+      const who = $('#revWho').value.trim();
+      const m = who.match(/^(.*?)\s*<([^>]+)>$/);
+      const p = m && people.find((x) => (x.email || '').toLowerCase() === m[2].toLowerCase());
+      const body = p ? { person_id: p.id } : { name: m ? m[1] : who, email: $('#revEmail').value.trim() || (m ? m[2] : '') };
+      body.round = +$('#revRound').value;
+      try { await api(`/articles/${id}/reviewers`, { method: 'POST', body }); article(id); } catch (err) { toast(err.message, true); }
     };
+    $('#revSection')?.addEventListener('click', (e) => busy(e.target, async () => {
+      if (dirty) await save(true);
+      const r = await api(`/articles/${id}/reviewers/from-section`, { method: 'POST' });
+      toast(r.added.length ? `Added ${r.added.join(', ')}${r.skipped.length ? ` · skipped ${r.skipped.join(', ')}` : ''}` : (r.skipped.length ? `Nobody added: ${r.skipped.join(', ')}` : 'No new reviewers - set this section\'s reviewers under People'), !r.added.length);
+      article(id);
+    }));
+    $$('[data-resend]').forEach((b) => { b.onclick = () => busy(b, async () => { if (dirty) await save(true); const r = await api(`/reviewers/${b.dataset.resend}/resend`, { method: 'POST' }); toast(r.sent.length ? 'Sent again' : `Not sent: ${r.failed.map((f) => f.error).join('; ')}`, !r.sent.length); article(id); }); });
     $$('[data-ver]').forEach((b) => {
       b.onclick = async () => {
         const v = await api(`/articles/${id}/versions/${b.dataset.ver}`);
@@ -559,6 +574,8 @@
           <label>Review deadline (days after sending)<input id="review_days" type="number" min="1" max="30" value="${esc(s.review_days)}"></label>
           <label>CC on every review email (comma separated)<input id="review_cc" value="${esc(s.review_cc)}"></label>
           <label>Email sender name<input id="email_from_name" value="${esc(s.email_from_name)}"></label>
+          <label><input type="checkbox" id="auto_assign_reviewers" ${s.auto_assign_reviewers === '1' ? 'checked' : ''} style="display:inline;width:auto;margin-right:6px">Add the section's Reviewer 1 / Reviewer 2 automatically after the AI review</label>
+          <label><input type="checkbox" id="cc_section_owners" ${s.cc_section_owners === '1' ? 'checked' : ''} style="display:inline;width:auto;margin-right:6px">Also CC the section owners on review emails</label>
           <div class="row"><input id="testTo" placeholder="Send test to (defaults to you)" style="margin:0" class="grow"><button class="btn" id="testMail">Send test email</button></div>
           <p class="muted" style="font-size:12px">SMTP is ${s.env.smtp ? '<strong>configured</strong>' : '<strong style="color:var(--danger)">not configured</strong> (set SMTP_USER / SMTP_PASS in .env)'}.</p></div>
         <div class="card"><h3>AI review</h3>
@@ -590,11 +607,104 @@
           <p class="muted" style="margin:0">Background job (reminders, AI queue) last ran: ${s.env.cron === 'never' ? '<strong style="color:var(--danger)">never — add the Cron Job (see README)</strong>' : esc(s.env.cron)}</p></div>
       </div>`;
     const ids = ['review_days', 'review_cc', 'email_from_name', 'ai_provider', 'gemini_model', 'groq_model', 'ai_prompt', 'image_model', 'image_style', 'wp_url', 'wp_user', 'wp_app_password', 'wp_layout', 'folder_template'];
-    const collect = () => Object.fromEntries([...ids.map((k) => [k, $('#' + k).value]), ['crop_featured', $('#crop_featured').checked ? '1' : '0'], ['folder_sections', $('#folder_sections').checked ? '1' : '0'], ['ai_fallback', $('#ai_fallback').checked ? '1' : '0']]);
+    const collect = () => Object.fromEntries([...ids.map((k) => [k, $('#' + k).value]), ['crop_featured', $('#crop_featured').checked ? '1' : '0'], ['folder_sections', $('#folder_sections').checked ? '1' : '0'], ['ai_fallback', $('#ai_fallback').checked ? '1' : '0'], ['auto_assign_reviewers', $('#auto_assign_reviewers').checked ? '1' : '0'], ['cc_section_owners', $('#cc_section_owners').checked ? '1' : '0']]);
     $('#saveSet').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); toast('Settings saved'); settingsPage(); });
     $('#testMail').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); const r = await api('/settings/test-email', { method: 'POST', body: { to: $('#testTo').value } }); toast(`Test email sent${r.cc.length ? ` (CC ${r.cc.join(', ')})` : ''}`); });
     $$('[data-testai]').forEach((b) => { b.onclick = () => busy(b, async () => { await api('/settings', { method: 'PUT', body: collect() }); await api('/settings/test-ai', { method: 'POST', body: { provider: b.dataset.testai } }); toast(`${b.dataset.testai === 'groq' ? 'Groq' : 'Gemini'} is responding`); }); });
     $('#testWp').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); const r = await api('/settings/test-wp', { method: 'POST' }); toast(`Connected to WordPress as ${r.name}`); });
+  }
+
+  // ---------- People & section reviewers ----------
+  const ROLE_LABEL = { reviewer: 'Reviewer', section_owner: 'Section owner', contributor: 'Contributor', team: 'Team' };
+  const SEC_ROLE_LABEL = { owner: 'Owner', reviewer1: 'Reviewer 1', reviewer2: 'Reviewer 2' };
+
+  async function peoplePage(tab) {
+    const isAdmin = me.role === 'admin';
+    const tabs = `<div class="tabs"><a href="#/people" class="${tab === 'people' ? 'on' : ''}">People</a><a href="#/people/sections" class="${tab === 'sections' ? 'on' : ''}">Section reviewers</a></div>`;
+    const head = `<div class="page-head"><div><h1>People</h1><div class="muted">Reviewers, section owners, contributors and team — used for review emails and section defaults</div></div>
+      ${isAdmin ? '<div class="row"><button class="btn" id="impBtn">Import from Excel</button><button class="btn primary" id="addPerson">Add person</button></div>' : ''}</div>${tabs}`;
+    if (tab === 'sections') return sectionsTab(head, isAdmin);
+
+    const q = sessionStorage.getItem('peopleQ') || '';
+    const role = sessionStorage.getItem('peopleRole') || '';
+    const list = await api(`/people?q=${encodeURIComponent(q)}&role=${encodeURIComponent(role)}`);
+    view.innerHTML = `${head}
+      <div class="toolbar"><input id="pq" placeholder="Search name, email or batch" value="${esc(q)}" style="max-width:320px;margin:0">
+        <select id="prole" style="width:auto;margin:0"><option value="">All roles</option>${Object.entries(ROLE_LABEL).map(([k, v]) => `<option value="${k}" ${role === k ? 'selected' : ''}>${v}s</option>`).join('')}</select>
+        <span class="muted">${list.length} ${list.length === 1 ? 'person' : 'people'}${list.filter((p) => !p.email).length ? ` · ${list.filter((p) => !p.email).length} without email` : ''}</span></div>
+      <div class="card" style="padding:0">${list.length ? `<table><thead><tr><th>Name</th><th>Email</th><th>Batch</th><th>Roles</th><th>Sections</th>${isAdmin ? '<th></th>' : ''}</tr></thead><tbody>
+        ${list.map((p) => `<tr class="${+p.active ? '' : 'muted'}"><td><strong>${esc(p.name)}</strong>${p.linkedin ? ` <a href="${esc(p.linkedin)}" target="_blank" rel="noopener" class="muted" style="font-size:12px">LinkedIn</a>` : ''}${+p.active ? '' : ' <span class="badge">inactive</span>'}</td>
+          <td>${p.email ? esc(p.email) : '<span class="badge warn">no email</span>'}</td><td>${esc(p.batch || '')}</td>
+          <td><div class="chips">${(p.roles || '').split(',').filter(Boolean).map((r) => `<span class="badge">${ROLE_LABEL[r] || r}</span>`).join('')}</div></td>
+          <td style="font-size:12.5px">${p.sections.map((s) => `<div>${SEC_ROLE_LABEL[s.role]} · ${esc(s.section)}</div>`).join('')}</td>
+          ${isAdmin ? `<td style="white-space:nowrap"><button class="btn small" data-edit="${p.id}">Edit</button> <button class="icon-btn" title="Delete" data-del="${p.id}">×</button></td>` : ''}</tr>`).join('')}
+      </tbody></table>` : `<p class="muted" style="padding:18px;margin:0">No people yet.${isAdmin ? ' Add them one by one or import your spreadsheet.' : ''}</p>`}</div>`;
+    let t;
+    $('#pq').oninput = (e) => { clearTimeout(t); t = setTimeout(() => { sessionStorage.setItem('peopleQ', e.target.value); peoplePage('people').then(() => { const i = $('#pq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }); }, 300); };
+    $('#prole').onchange = (e) => { sessionStorage.setItem('peopleRole', e.target.value); peoplePage('people'); };
+    wirePeopleButtons(isAdmin, () => peoplePage('people'));
+    $$('[data-edit]').forEach((b) => { b.onclick = () => personModal(list.find((p) => p.id == b.dataset.edit), () => peoplePage('people')); });
+    $$('[data-del]').forEach((b) => { b.onclick = async () => { const p = list.find((x) => x.id == b.dataset.del); if (!confirm(`Delete ${p.name}? Reviews they already did stay on the articles.`)) return; try { await api(`/people/${p.id}`, { method: 'DELETE' }); peoplePage('people'); } catch (e) { toast(e.message, true); } }; });
+  }
+
+  function wirePeopleButtons(isAdmin, reload) {
+    if (!isAdmin) return;
+    $('#addPerson').onclick = () => personModal(null, reload);
+    $('#impBtn').onclick = () => {
+      const body = modal('Import people from Excel', `
+        <p class="muted" style="margin-top:0">Upload an Excel (.xlsx) or CSV file. Sheets named <strong>Editors</strong>/<strong>Reviewers</strong> become reviewers, <strong>Team</strong> becomes team, <strong>Contributors</strong>/<strong>Authors</strong> become contributors; any sheet with <em>Name</em> and <em>Email</em> columns is read too (Batch, LinkedIn, Phone and Role columns are used when present). A <strong>Status</strong> sheet with a <em>Section owners</em> column sets the owners of each section.</p>
+        <p class="muted">People already in the list are matched by email or name and updated — nobody is duplicated or removed.</p>
+        <input type="file" id="impFile" accept=".xlsx,.csv" style="margin-bottom:12px">
+        <div class="row"><span class="grow"></span><button class="btn primary" id="impGo">Import</button></div>`);
+      $('#impGo', body).onclick = (e) => busy(e.target, async () => {
+        const f = $('#impFile', body).files[0];
+        if (!f) throw new Error('Choose a file first');
+        const fd = new FormData(); fd.append('file', f);
+        const r = await api('/people/import', { method: 'POST', form: fd });
+        modal('Import finished', `<p style="margin-top:0"><strong>${r.added}</strong> added, <strong>${r.updated}</strong> updated.</p>
+          <ul class="filelist">${r.sheets.map((s) => `<li>${esc(s.sheet)} → ${esc(s.role)}: ${s.people}</li>`).join('')}</ul>
+          ${r.sectionOwners.length ? `<h3 class="sec-h">Section owners</h3><ul class="filelist">${r.sectionOwners.map((s) => `<li>${esc(s.section)}: ${s.owners.map(esc).join(', ')}</li>`).join('')}</ul>` : ''}
+          ${r.unmatched.length ? `<div class="notes">${r.unmatched.map(esc).join('\n')}</div>` : ''}
+          ${r.skipped.length ? `<p class="muted" style="font-size:12px">Sheets not used: ${r.skipped.map(esc).join(', ')}</p>` : ''}
+          <div class="row"><span class="grow"></span><a class="btn" href="#/people/sections" id="toSec">Set section reviewers</a><button class="btn primary" id="impOk">Done</button></div>`);
+        $('#impOk').onclick = () => { closeModal(); reload(); };
+        $('#toSec').onclick = closeModal;
+      }, 'Importing…');
+    };
+  }
+
+  function personModal(p, reload) {
+    const roles = (p?.roles || 'reviewer').split(',');
+    const body = modal(p ? `Edit ${p.name}` : 'Add person', `
+      <div class="grid2"><label>Name<input id="pn" value="${esc(p?.name || '')}"></label><label>Email<input id="pe" type="email" value="${esc(p?.email || '')}"></label>
+      <label>Batch<input id="pb" value="${esc(p?.batch || '')}" placeholder="e.g. 1987-1991"></label><label>Phone / WhatsApp<input id="pp" value="${esc(p?.phone || '')}"></label></div>
+      <label>LinkedIn<input id="pl" value="${esc(p?.linkedin || '')}" placeholder="https://www.linkedin.com/in/…"></label>
+      <div style="margin-bottom:12px"><div style="font-weight:500;font-size:13px;margin-bottom:6px">Roles</div><div class="row">${Object.entries(ROLE_LABEL).map(([k, v]) => `<label style="margin:0;font-weight:400"><input type="checkbox" class="prl" value="${k}" ${roles.includes(k) ? 'checked' : ''} style="display:inline;width:auto;margin-right:5px">${v}</label>`).join('')}</div></div>
+      <label>Notes<textarea id="pnotes" rows="2">${esc(p?.notes || '')}</textarea></label>
+      ${p ? `<label><input type="checkbox" id="pact" ${+p.active ? 'checked' : ''} style="display:inline;width:auto;margin-right:6px">Active (inactive people are not added to new articles)</label>` : ''}
+      <div class="row"><span class="grow"></span><button class="btn primary" id="psave">Save</button></div>`);
+    $('#psave', body).onclick = (e) => busy(e.target, async () => {
+      const data = { name: $('#pn', body).value, email: $('#pe', body).value, batch: $('#pb', body).value, phone: $('#pp', body).value, linkedin: $('#pl', body).value,
+        notes: $('#pnotes', body).value, roles: $$('.prl', body).filter((c) => c.checked).map((c) => c.value) };
+      if (p) data.active = $('#pact', body).checked;
+      await api(p ? `/people/${p.id}` : '/people', { method: p ? 'PUT' : 'POST', body: data });
+      closeModal(); toast('Saved'); reload();
+    });
+  }
+
+  async function sectionsTab(head, isAdmin) {
+    const [secs, people] = await Promise.all([api('/section-people'), api('/people')]);
+    const active = people.filter((p) => +p.active);
+    const col = (s, role) => `<div class="secp"><div class="muted" style="font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${SEC_ROLE_LABEL[role]}${role === 'owner' ? 's' : ''}</div>
+      <div class="chips">${s[role].map((p) => `<span class="badge ${p.email ? '' : 'warn'}" title="${esc(p.email || 'no email')}">${esc(p.name)}${isAdmin ? ` <a href="#" data-rm="${s.id}|${role}|${p.id}" style="color:inherit;text-decoration:none">×</a>` : ''}</span>`).join('') || '<span class="muted" style="font-size:12px">—</span>'}</div>
+      ${isAdmin ? `<select data-add="${s.id}|${role}" style="margin:6px 0 0;padding:4px 8px;font-size:12.5px"><option value="">+ Add…</option>${active.filter((p) => !s[role].some((x) => x.id === +p.id)).map((p) => `<option value="${p.id}">${esc(p.name)}${p.email ? '' : ' (no email)'}</option>`).join('')}</select>` : ''}</div>`;
+    view.innerHTML = `${head}
+      <p class="muted" style="margin-top:0">When an article in a section finishes its AI review, that section's <strong>Reviewer 1</strong> people are added as round 1 reviewers and <strong>Reviewer 2</strong> as round 2. Round 2 is emailed automatically once everyone in round 1 approves. <strong>Owners</strong> are copied on the section's review emails. (Both can be switched off in Settings.)</p>
+      ${secs.map((s) => `<div class="card"><h3>${s.num}. ${esc(s.name)}</h3><div class="grid3">${col(s, 'owner')}${col(s, 'reviewer1')}${col(s, 'reviewer2')}</div></div>`).join('')}`;
+    wirePeopleButtons(isAdmin, () => peoplePage('sections'));
+    const saveRole = async (sid, role, ids) => { try { await api(`/sections/${sid}/people`, { method: 'PUT', body: { [role]: ids } }); peoplePage('sections'); } catch (e) { toast(e.message, true); } };
+    $$('[data-add]').forEach((sel) => { sel.onchange = () => { if (!sel.value) return; const [sid, role] = sel.dataset.add.split('|'); const s = secs.find((x) => x.id == sid); saveRole(sid, role, [...s[role].map((p) => p.id), +sel.value]); }; });
+    $$('[data-rm]').forEach((a) => { a.onclick = (e) => { e.preventDefault(); const [sid, role, pid] = a.dataset.rm.split('|'); const s = secs.find((x) => x.id == sid); saveRole(sid, role, s[role].map((p) => p.id).filter((x) => x != pid)); }; });
   }
 
   // ---------- Users ----------
