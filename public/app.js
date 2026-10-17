@@ -539,10 +539,10 @@
           <div class="row"><input id="testTo" placeholder="Send test to (defaults to you)" style="margin:0" class="grow"><button class="btn" id="testMail">Send test email</button></div>
           <p class="muted" style="font-size:12px">SMTP is ${s.env.smtp ? '<strong>configured</strong>' : '<strong style="color:var(--danger)">not configured</strong> (set SMTP_USER / SMTP_PASS in .env)'}.</p></div>
         <div class="card"><h3>AI review</h3>
-          <label>Main AI provider<select id="ai_provider">${[['gemini', 'Google Gemini'], ['groq', 'Groq (free tier, Llama models)']].map(([v, l]) => `<option value="${v}" ${s.ai_provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label>Main AI provider<select id="ai_provider">${[['gemini', 'Google Gemini'], ['groq', 'Groq (free tier)']].map(([v, l]) => `<option value="${v}" ${s.ai_provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
           <label><input type="checkbox" id="ai_fallback" ${s.ai_fallback === '1' ? 'checked' : ''} style="display:inline;width:auto;margin-right:6px">If the main provider fails, try the other one</label>
           <div class="grid2"><label>Gemini model<input id="gemini_model" value="${esc(s.gemini_model)}" placeholder="gemini-2.5-flash"></label>
-            <label>Groq model<input id="groq_model" value="${esc(s.groq_model)}" placeholder="llama-3.3-70b-versatile"></label></div>
+            <label>Groq model<input id="groq_model" value="${esc(s.groq_model)}" placeholder="openai/gpt-oss-120b"></label></div>
           <label>Editing instructions (leave empty for the default)<textarea id="ai_prompt" rows="7" placeholder="${esc(s.default_prompt)}">${esc(s.ai_prompt)}</textarea></label>
           <div class="row"><button class="btn" data-testai="gemini">Test Gemini</button><button class="btn" data-testai="groq">Test Groq</button></div>
           <p class="muted" style="font-size:12px;margin:8px 0 0">Keys in .env: Gemini ${s.env.gemini ? 'set' : '<strong style="color:var(--danger)">missing</strong> (GEMINI_API_KEY)'} · Groq ${s.env.groq ? 'set' : '<strong style="color:var(--danger)">missing</strong> (GROQ_API_KEY)'}</p></div>

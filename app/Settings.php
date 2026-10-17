@@ -17,7 +17,7 @@ final class Settings
             'ai_prompt' => '',
             'ai_provider' => in_array(Config::get('AI_PROVIDER'), ['gemini', 'groq'], true) ? (string) Config::get('AI_PROVIDER') : (Config::get('GEMINI_API_KEY') || !Config::get('GROQ_API_KEY') ? 'gemini' : 'groq'),
             'ai_fallback' => '1',
-            'groq_model' => (string) Config::get('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+            'groq_model' => (string) Config::get('GROQ_MODEL', 'openai/gpt-oss-120b'),
             'wp_url' => rtrim((string) Config::get('WP_URL', 'https://readthemissinglink.net'), '/'),
             'wp_user' => (string) Config::get('WP_USER', ''),
             'wp_app_password' => (string) Config::get('WP_APP_PASSWORD', ''),

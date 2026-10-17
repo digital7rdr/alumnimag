@@ -99,7 +99,12 @@ TXT;
     {
         $key = Config::get('GROQ_API_KEY');
         if (!$key) throw new AppError('GROQ_API_KEY is not set in .env');
-        $model = Settings::get('groq_model') ?: 'llama-3.3-70b-versatile';
+        $model = trim(Settings::get('groq_model')) ?: 'openai/gpt-oss-120b';
+        // Models Groq has shut down -> their recommended replacements (https://console.groq.com/docs/deprecations)
+        $retired = ['llama-3.3-70b-versatile' => 'openai/gpt-oss-120b', 'llama-3.1-8b-instant' => 'openai/gpt-oss-20b',
+            'qwen/qwen3-32b' => 'openai/gpt-oss-120b', 'meta-llama/llama-4-scout-17b-16e-instruct' => 'openai/gpt-oss-120b',
+            'moonshotai/kimi-k2-instruct-0905' => 'openai/gpt-oss-120b', 'qwen/qwen3.6-27b' => 'openai/gpt-oss-120b'];
+        $model = $retired[$model] ?? $model;
         $base = rtrim((string) Config::get('GROQ_BASE_URL', 'https://api.groq.com/openai'), '/');
         $body = json_encode([
             'model' => $model,
@@ -107,7 +112,7 @@ TXT;
             'temperature' => 0.3,
             'response_format' => ['type' => 'json_object'],
             'max_completion_tokens' => 16000,
-        ], JSON_UNESCAPED_UNICODE);
+        ] + (str_starts_with($model, 'openai/gpt-oss') ? ['reasoning_effort' => 'low'] : []), JSON_UNESCAPED_UNICODE);
 
         $last = 'Groq request failed';
         for ($attempt = 1; $attempt <= 3; $attempt++) {
@@ -159,9 +164,12 @@ TXT;
             if ($restored['restored']) $notes[] = count($restored['restored']) . ' photo(s) were re-attached at the end because the AI moved them - check their position.';
             $title = mb_substr(trim(str_replace('*', '', (string) ($out['title'] ?? ''))), 0, 290) ?: $art['title'];
 
-            Db::exec("UPDATE articles SET status = 'edited', title = ?, subtitle = ?, author_name = COALESCE(NULLIF(?, ''), author_name),
+            // (Decided in PHP, not SQL: comparing two text values in SQL fails on servers with mixed collations.)
+            $authorLine = trim(mb_substr((string) ($out['author_line'] ?? ''), 0, 190));
+            $author = $authorLine !== '' ? $authorLine : $art['author_name'];
+            Db::exec("UPDATE articles SET status = 'edited', title = ?, subtitle = ?, author_name = ?,
                 edited_html = ?, summary = ?, ai_notes = ?, ai_started_at = NULL WHERE id = ?", [
-                $title, mb_substr((string) ($out['subtitle'] ?? ''), 0, 290) ?: null, mb_substr((string) ($out['author_line'] ?? ''), 0, 190),
+                $title, mb_substr((string) ($out['subtitle'] ?? ''), 0, 290) ?: null, $author,
                 $body, ((string) ($out['summary'] ?? '')) ?: null, $notes ? implode("\n", $notes) : null, $articleId,
             ]);
             $who = self::PROVIDERS[self::$lastProvider] ?? 'AI';
