@@ -16,7 +16,56 @@ TXT;
     private const RESPONSE_SHAPE = 'Return ONLY a JSON object with these keys:
 {"title": string, "subtitle": string or "", "author_line": string or "", "body_html": string, "summary": string (max 2 sentences), "changes": [short strings describing the main edits]}';
 
-    public static function call(string $system, string $user): array
+    public const PROVIDERS = ['gemini' => 'Google Gemini', 'groq' => 'Groq'];
+    public static ?string $lastProvider = null;
+    public static array $lastNotes = [];
+
+    public static function hasKey(string $provider): bool
+    {
+        return (bool) Config::get($provider === 'groq' ? 'GROQ_API_KEY' : 'GEMINI_API_KEY');
+    }
+
+    /** Main provider first; the other one is tried when the main one fails (if enabled and its key is set). */
+    public static function order(): array
+    {
+        $main = Settings::get('ai_provider') === 'groq' ? 'groq' : 'gemini';
+        $other = $main === 'groq' ? 'gemini' : 'groq';
+        $list = [$main];
+        if (Settings::get('ai_fallback') === '1' && self::hasKey($other)) $list[] = $other;
+        return $list;
+    }
+
+    /** Sends the prompt and returns the JSON object from the model. */
+    public static function call(string $system, string $user, ?string $only = null): array
+    {
+        self::$lastNotes = [];
+        $errors = [];
+        foreach ($only ? [$only] : self::order() as $p) {
+            try {
+                $out = $p === 'groq' ? self::groq($system, $user) : self::gemini($system, $user);
+                self::$lastProvider = $p;
+                if ($errors) self::$lastNotes[] = 'Edited with ' . self::PROVIDERS[$p] . ' because ' . implode('; ', $errors);
+                return $out;
+            } catch (Throwable $e) {
+                $errors[] = $e->getMessage();
+            }
+        }
+        throw new AppError(implode(' | ', $errors), 502);
+    }
+
+    private static function parseJson(string $text, string $who): array
+    {
+        $json = json_decode(preg_replace('/^```(?:json)?\s*|\s*```$/', '', trim($text)), true);
+        if (!is_array($json)) throw new AppError("$who did not return valid JSON - please run the review again");
+        return $json;
+    }
+
+    private static function retryable(int $status): bool
+    {
+        return in_array($status, [0, 429, 500, 502, 503, 504], true);
+    }
+
+    private static function gemini(string $system, string $user): array
     {
         $key = Config::get('GEMINI_API_KEY');
         if (!$key) throw new AppError('GEMINI_API_KEY is not set in .env');
@@ -36,13 +85,46 @@ TXT;
             if ($status >= 200 && $status < 300) {
                 $text = implode('', array_map(fn ($p) => $p['text'] ?? '', $data['candidates'][0]['content']['parts'] ?? []));
                 if ($text === '') throw new AppError('Gemini returned an empty response' . (isset($data['candidates'][0]['finishReason']) ? ' (' . $data['candidates'][0]['finishReason'] . ')' : ''));
-                $json = json_decode(preg_replace('/^```(?:json)?\s*|\s*```$/', '', trim($text)), true);
-                if (!is_array($json)) throw new AppError('Gemini did not return valid JSON - please run the review again');
-                return $json;
+                return self::parseJson($text, 'Gemini');
             }
             $last = "Gemini $status: " . ($data['error']['message'] ?? ($status ? substr($resp, 0, 200) : $resp));
-            if (!in_array($status, [0, 429, 500, 502, 503, 504], true)) break;
+            if (!self::retryable($status)) break;
             sleep(2 * $attempt);
+        }
+        throw new AppError($last, 502);
+    }
+
+    // Groq uses the OpenAI-compatible chat API.
+    private static function groq(string $system, string $user): array
+    {
+        $key = Config::get('GROQ_API_KEY');
+        if (!$key) throw new AppError('GROQ_API_KEY is not set in .env');
+        $model = Settings::get('groq_model') ?: 'llama-3.3-70b-versatile';
+        $base = rtrim((string) Config::get('GROQ_BASE_URL', 'https://api.groq.com/openai'), '/');
+        $body = json_encode([
+            'model' => $model,
+            'messages' => [['role' => 'system', 'content' => $system], ['role' => 'user', 'content' => $user]],
+            'temperature' => 0.3,
+            'response_format' => ['type' => 'json_object'],
+            'max_completion_tokens' => 16000,
+        ], JSON_UNESCAPED_UNICODE);
+
+        $last = 'Groq request failed';
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            [$status, $resp] = Http::request('POST', "$base/v1/chat/completions", ['Content-Type: application/json', "Authorization: Bearer $key"], $body, 240);
+            $data = json_decode($resp, true);
+            if ($status >= 200 && $status < 300) {
+                $choice = $data['choices'][0] ?? [];
+                if (($choice['finish_reason'] ?? '') === 'length') throw new AppError('Groq stopped early because the article is too long for the model - split it or use Gemini');
+                $text = (string) ($choice['message']['content'] ?? '');
+                if ($text === '') throw new AppError('Groq returned an empty response');
+                return self::parseJson($text, 'Groq');
+            }
+            $msg = $data['error']['message'] ?? ($status ? substr($resp, 0, 200) : $resp);
+            if ($status === 413 || stripos((string) $msg, 'tokens per minute') !== false) $msg .= ' (the free Groq tier limits tokens per minute - long articles may need Gemini)';
+            $last = "Groq $status: $msg";
+            if (!self::retryable($status) || $status === 413) break;
+            sleep(3 * $attempt);
         }
         throw new AppError($last, 502);
     }
@@ -69,10 +151,11 @@ TXT;
 
             $restored = Html::tokensToImages(Html::fixMarkdown((string) ($out['body_html'] ?? '')), $t['ids']);
             $body = Html::clean($restored['html']);
-            if (Html::plainText($body) === '' && Html::plainText($art['raw_html'] ?? '') !== '') throw new AppError('Gemini returned an empty article - nothing was changed');
+            if (Html::plainText($body) === '' && Html::plainText($art['raw_html'] ?? '') !== '') throw new AppError('The AI returned an empty article - nothing was changed');
 
             $notes = [];
             foreach ((array) ($out['changes'] ?? []) as $c) if (is_scalar($c)) $notes[] = (string) $c;
+            array_push($notes, ...self::$lastNotes);
             if ($restored['restored']) $notes[] = count($restored['restored']) . ' photo(s) were re-attached at the end because the AI moved them - check their position.';
             $title = mb_substr(trim(str_replace('*', '', (string) ($out['title'] ?? ''))), 0, 290) ?: $art['title'];
 
@@ -81,10 +164,11 @@ TXT;
                 $title, mb_substr((string) ($out['subtitle'] ?? ''), 0, 290) ?: null, mb_substr((string) ($out['author_line'] ?? ''), 0, 190),
                 $body, ((string) ($out['summary'] ?? '')) ?: null, $notes ? implode("\n", $notes) : null, $articleId,
             ]);
-            Db::exec("INSERT INTO article_versions (article_id, label, title, html, user_id) VALUES (?, 'AI edit', ?, ?, ?)", [$articleId, $title, $body, $userId]);
-            Activity::log($articleId, (int) $art['edition_id'], $userId, 'ai_review', count($t['ids']) . ' image(s) preserved');
+            $who = self::PROVIDERS[self::$lastProvider] ?? 'AI';
+            Db::exec('INSERT INTO article_versions (article_id, label, title, html, user_id) VALUES (?, ?, ?, ?, ?)', [$articleId, 'AI edit (' . $who . ')', $title, $body, $userId]);
+            Activity::log($articleId, (int) $art['edition_id'], $userId, 'ai_review', "$who: " . count($t['ids']) . ' image(s) preserved');
             Folders::afterStageChange($articleId);
-            return ['ok' => true, 'title' => $title, 'imagesPreserved' => count($t['ids']), 'restored' => count($restored['restored'])];
+            return ['ok' => true, 'title' => $title, 'imagesPreserved' => count($t['ids']), 'restored' => count($restored['restored']), 'provider' => $who];
         } catch (Throwable $e) {
             Db::exec('UPDATE articles SET status = ?, ai_error = ?, ai_started_at = NULL WHERE id = ?', [$art['status'], mb_substr($e->getMessage(), 0, 1000), $articleId]);
             Activity::log($articleId, (int) $art['edition_id'], $userId, 'ai_error', $e->getMessage());
@@ -132,8 +216,9 @@ TXT;
             WHERE status = 'reviewing' AND (ai_started_at IS NULL OR ai_started_at < NOW() - INTERVAL 10 MINUTE)");
     }
 
-    public static function test(): bool
+    public static function test(string $provider): bool
     {
-        return (bool) self::call('Reply as JSON {"ok": true}.', 'ping');
+        if (!isset(self::PROVIDERS[$provider])) throw new AppError('Unknown AI provider');
+        return (bool) self::call('Reply with the JSON object {"ok": true}.', 'ping', $provider);
     }
 }

@@ -315,6 +315,7 @@ final class Api
             // ---------- Settings / users (admin) ----------
             ['GET', '/settings', fn () => Http::json(Settings::publicView() + ['default_prompt' => Ai::DEFAULT_PROMPT, 'env' => [
                 'gemini' => (bool) Config::get('GEMINI_API_KEY'),
+                'groq' => (bool) Config::get('GROQ_API_KEY'),
                 'smtp' => Config::get('SMTP_USER') && Config::get('SMTP_PASS'),
                 'storageDir' => Storage::root(),
                 'uploadLimit' => ini_get('upload_max_filesize') . ' per file, ' . ini_get('post_max_size') . ' per upload',
@@ -323,6 +324,7 @@ final class Api
             ['PUT', '/settings', function ($b) {
                 if (($b['wp_app_password'] ?? null) === Settings::MASK) unset($b['wp_app_password']);
                 if (array_key_exists('folder_template', $b)) Folders::parseTemplate((string) $b['folder_template']);
+                if (array_key_exists('ai_provider', $b) && !isset(Ai::PROVIDERS[$b['ai_provider']])) throw new AppError('Unknown AI provider');
                 if (array_key_exists('review_days', $b)) {
                     $d = (int) $b['review_days'];
                     if ($d < 1 || $d > 30) throw new AppError('Review days must be between 1 and 30');
@@ -332,7 +334,7 @@ final class Api
                 Http::json(['ok' => true]);
             }, true],
             ['POST', '/settings/test-wp', fn () => Http::json(Wp::test()), true],
-            ['POST', '/settings/test-ai', fn () => Http::json(['ok' => Ai::test()]), true],
+            ['POST', '/settings/test-ai', fn ($b) => Http::json(['ok' => Ai::test((string) ($b['provider'] ?? 'gemini'))]), true],
             ['POST', '/settings/test-email', function ($b) {
                 $to = trim((string) ($b['to'] ?? '')) ?: $_SESSION['user']['email'];
                 $info = Mailer::sendReviewMail($to, 'Test from The Missing Link dashboard', '<p>Email is working. The review CC address is included on this message.</p>', 'Email is working.');

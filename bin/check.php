@@ -13,12 +13,16 @@ echo "PHP " . PHP_VERSION . "\n";
 $line(version_compare(PHP_VERSION, '8.1', '>='), 'PHP 8.1 or newer');
 foreach (['pdo_mysql', 'curl', 'zip', 'gd', 'dom', 'mbstring', 'openssl', 'fileinfo'] as $ext) $line(extension_loaded($ext), "extension $ext");
 
-$keys = ['DB_NAME', 'DB_USER', 'DB_PASSWORD', 'GEMINI_API_KEY', 'SMTP_USER', 'SMTP_PASS', 'ADMIN_EMAIL'];
+$keys = ['DB_NAME', 'DB_USER', 'DB_PASSWORD', 'SMTP_USER', 'SMTP_PASS', 'ADMIN_EMAIL'];
 if (in_array(Config::get('MAIL_TRANSPORT'), ['log', 'json'], true)) $keys = array_diff($keys, ['SMTP_USER', 'SMTP_PASS']);
 foreach ($keys as $k) {
     $v = Config::get($k);
     $line($v !== null && $v !== '', "$k " . ($v ? 'set (' . strlen($v) . ' chars)' : 'MISSING'));
 }
+
+$g = (bool) Config::get('GEMINI_API_KEY');
+$q = (bool) Config::get('GROQ_API_KEY');
+$line($g || $q, 'AI key: ' . ($g ? 'GEMINI_API_KEY set' : 'no GEMINI_API_KEY') . ', ' . ($q ? 'GROQ_API_KEY set' : 'no GROQ_API_KEY') . ($g || $q ? '' : ' - set at least one'));
 
 try {
     Migrate::run();

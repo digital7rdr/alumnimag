@@ -487,7 +487,7 @@
     $('#previewBtn').onclick = () => modal($('#fTitle').value, `<div class="preview">${$('#fSub').value ? `<p><em>${esc($('#fSub').value)}</em></p>` : ''}${quill.root.innerHTML}</div>`, { wide: true });
 
     const act = {
-      ai: async () => { if (dirty) await save(true); toast('AI review running — this takes up to a minute'); const r = await api(`/articles/${id}/ai-review`, { method: 'POST' }); toast(`AI review done — ${r.imagesPreserved} photo(s) kept in place`); },
+      ai: async () => { if (dirty) await save(true); toast('AI review running — this takes up to a minute'); const r = await api(`/articles/${id}/ai-review`, { method: 'POST' }); toast(`AI review done with ${r.provider} — ${r.imagesPreserved} photo(s) kept in place`); },
       send: async () => { if (dirty) await save(true); const r = await api(`/articles/${id}/send-review`, { method: 'POST' }); toast(`Sent to ${r.sent.length} reviewer(s), due in ${r.days} day(s)${r.failed.length ? ` — ${r.failed.length} failed: ${r.failed.map((f) => f.error).join('; ')}` : ''}`, !!r.failed.length); },
       'to-compiled': async () => { if (dirty) await save(true); await api(`/articles/${id}/stage`, { method: 'POST', body: { to: 'compiled' } }); toast('Moved to Compiled'); },
       'to-edited': async () => { await api(`/articles/${id}/stage`, { method: 'POST', body: { to: 'edited' } }); toast('Moved back to AI edited'); },
@@ -538,10 +538,14 @@
           <label>Email sender name<input id="email_from_name" value="${esc(s.email_from_name)}"></label>
           <div class="row"><input id="testTo" placeholder="Send test to (defaults to you)" style="margin:0" class="grow"><button class="btn" id="testMail">Send test email</button></div>
           <p class="muted" style="font-size:12px">SMTP is ${s.env.smtp ? '<strong>configured</strong>' : '<strong style="color:var(--danger)">not configured</strong> (set SMTP_USER / SMTP_PASS in .env)'}.</p></div>
-        <div class="card"><h3>AI review (Google Gemini)</h3>
-          <label>Model<input id="gemini_model" value="${esc(s.gemini_model)}" placeholder="gemini-2.5-flash"></label>
-          <label>Editing instructions (leave empty for the default)<textarea id="ai_prompt" rows="8" placeholder="${esc(s.default_prompt)}">${esc(s.ai_prompt)}</textarea></label>
-          <div class="row"><button class="btn" id="testAi">Test Gemini</button><span class="muted" style="font-size:12px">API key ${s.env.gemini ? 'is set' : '<strong style="color:var(--danger)">missing</strong> (GEMINI_API_KEY in .env)'}</span></div></div>
+        <div class="card"><h3>AI review</h3>
+          <label>Main AI provider<select id="ai_provider">${[['gemini', 'Google Gemini'], ['groq', 'Groq (free tier, Llama models)']].map(([v, l]) => `<option value="${v}" ${s.ai_provider === v ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label><input type="checkbox" id="ai_fallback" ${s.ai_fallback === '1' ? 'checked' : ''} style="display:inline;width:auto;margin-right:6px">If the main provider fails, try the other one</label>
+          <div class="grid2"><label>Gemini model<input id="gemini_model" value="${esc(s.gemini_model)}" placeholder="gemini-2.5-flash"></label>
+            <label>Groq model<input id="groq_model" value="${esc(s.groq_model)}" placeholder="llama-3.3-70b-versatile"></label></div>
+          <label>Editing instructions (leave empty for the default)<textarea id="ai_prompt" rows="7" placeholder="${esc(s.default_prompt)}">${esc(s.ai_prompt)}</textarea></label>
+          <div class="row"><button class="btn" data-testai="gemini">Test Gemini</button><button class="btn" data-testai="groq">Test Groq</button></div>
+          <p class="muted" style="font-size:12px;margin:8px 0 0">Keys in .env: Gemini ${s.env.gemini ? 'set' : '<strong style="color:var(--danger)">missing</strong> (GEMINI_API_KEY)'} · Groq ${s.env.groq ? 'set' : '<strong style="color:var(--danger)">missing</strong> (GROQ_API_KEY)'}</p></div>
         <div class="card"><h3>WordPress</h3>
           <label>Site URL<input id="wp_url" value="${esc(s.wp_url)}"></label>
           <label>Username<input id="wp_user" value="${esc(s.wp_user)}"></label>
@@ -558,11 +562,11 @@
           <p class="muted" style="margin:0 0 8px">Upload limit: ${esc(s.env.uploadLimit)} (change it in hPanel → PHP Configuration if needed).</p>
           <p class="muted" style="margin:0">Background job (reminders, AI queue) last ran: ${s.env.cron === 'never' ? '<strong style="color:var(--danger)">never — add the Cron Job (see README)</strong>' : esc(s.env.cron)}</p></div>
       </div>`;
-    const ids = ['review_days', 'review_cc', 'email_from_name', 'gemini_model', 'ai_prompt', 'wp_url', 'wp_user', 'wp_app_password', 'wp_layout', 'folder_template'];
-    const collect = () => Object.fromEntries([...ids.map((k) => [k, $('#' + k).value]), ['crop_featured', $('#crop_featured').checked ? '1' : '0'], ['folder_sections', $('#folder_sections').checked ? '1' : '0']]);
+    const ids = ['review_days', 'review_cc', 'email_from_name', 'ai_provider', 'gemini_model', 'groq_model', 'ai_prompt', 'wp_url', 'wp_user', 'wp_app_password', 'wp_layout', 'folder_template'];
+    const collect = () => Object.fromEntries([...ids.map((k) => [k, $('#' + k).value]), ['crop_featured', $('#crop_featured').checked ? '1' : '0'], ['folder_sections', $('#folder_sections').checked ? '1' : '0'], ['ai_fallback', $('#ai_fallback').checked ? '1' : '0']]);
     $('#saveSet').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); toast('Settings saved'); settingsPage(); });
     $('#testMail').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); const r = await api('/settings/test-email', { method: 'POST', body: { to: $('#testTo').value } }); toast(`Test email sent${r.cc.length ? ` (CC ${r.cc.join(', ')})` : ''}`); });
-    $('#testAi').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); await api('/settings/test-ai', { method: 'POST' }); toast('Gemini is responding'); });
+    $$('[data-testai]').forEach((b) => { b.onclick = () => busy(b, async () => { await api('/settings', { method: 'PUT', body: collect() }); await api('/settings/test-ai', { method: 'POST', body: { provider: b.dataset.testai } }); toast(`${b.dataset.testai === 'groq' ? 'Groq' : 'Gemini'} is responding`); }); });
     $('#testWp').onclick = (e) => busy(e.target, async () => { await api('/settings', { method: 'PUT', body: collect() }); const r = await api('/settings/test-wp', { method: 'POST' }); toast(`Connected to WordPress as ${r.name}`); });
   }
 

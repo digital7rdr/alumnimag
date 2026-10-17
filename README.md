@@ -92,12 +92,16 @@ Only `public/` is web-facing. `bin/deploy.sh` copies it into the subdomain's web
    /usr/bin/php /home/u604557415/alumnimag/bin/cron.php
    ```
    (Use the PHP path shown by `which php` over SSH if different.) Settings → *Server* shows when it last ran.
-5. **Gmail** — on alumnikarunya@gmail.com create an App Password (Google Account → Security → App passwords)
+5. **AI keys** — set `GEMINI_API_KEY` (https://aistudio.google.com/apikey) and/or `GROQ_API_KEY`
+   (https://console.groq.com/keys, free tier) in `.env`. Choose the main provider in *Settings → AI review*;
+   when it fails (no credit, rate limit), the other one is used automatically if its key is set.
+   Groq is text-only (no image generation); its free tier limits tokens per minute, so very long articles may need Gemini.
+6. **Gmail** — on alumnikarunya@gmail.com create an App Password (Google Account → Security → App passwords)
    and put it in `SMTP_PASS`.
-6. **WordPress** — on an administrator account go to *Users → Profile → Application Passwords*, create one,
+7. **WordPress** — on an administrator account go to *Users → Profile → Application Passwords*, create one,
    and enter the username and password in *Settings → WordPress*.
    Copy `wordpress/tml-bridge.php` to `wp-content/mu-plugins/` so drafts get the Divi layout settings.
-7. Open https://drive.readthemissinglink.net, sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, add editors under *Users*.
+8. Open https://drive.readthemissinglink.net, sign in with `ADMIN_EMAIL` / `ADMIN_PASSWORD`, add editors under *Users*.
 
 ### Updating
 
