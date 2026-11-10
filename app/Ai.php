@@ -225,6 +225,7 @@ TXT;
     {
         Db::exec("UPDATE articles SET status = COALESCE(ai_prev_status, 'raw'), ai_error = 'The AI review was interrupted - please run it again', ai_started_at = NULL
             WHERE status = 'reviewing' AND (ai_started_at IS NULL OR ai_started_at < NOW() - INTERVAL 10 MINUTE)");
+        Db::exec("UPDATE articles SET ai_queued = 0 WHERE ai_queued = 1 AND status NOT IN ('raw', 'reviewing')"); // queued but already done
     }
 
     public static function test(string $provider): bool

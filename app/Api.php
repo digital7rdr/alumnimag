@@ -93,6 +93,7 @@ final class Api
                 Http::json(['id' => $id, 'folders' => $gen]);
             }, true],
             ['GET', '/editions/(\d+)', function ($b, $id) {
+                Ai::recoverStale();
                 $e = Db::one('SELECT * FROM editions WHERE id = ?', [$id]);
                 if (!$e) throw new AppError('Issue not found', 404);
                 $e['articles'] = Db::q("SELECT a.id, a.title, a.author_name, a.status, a.source, a.section_id, a.featured_file_id, a.ai_error, a.ai_queued,
@@ -167,6 +168,7 @@ final class Api
 
             // ---------- Articles ----------
             ['GET', '/articles/(\d+)', function ($b, $id) {
+                Ai::recoverStale();
                 $a = Db::one('SELECT a.*, s.name AS section_name, s.num AS section_num, e.name AS edition_name, e.year AS edition_year
                     FROM articles a LEFT JOIN sections s ON s.id = a.section_id JOIN editions e ON e.id = a.edition_id WHERE a.id = ?', [$id]);
                 if (!$a) throw new AppError('Article not found', 404);
@@ -220,6 +222,18 @@ final class Api
             ['POST', '/articles/(\d+)/ai-image/prompt', fn ($b, $id) => Http::json(['prompt' => AiImage::suggestPrompt((int) $id)]), false],
             ['POST', '/articles/(\d+)/ai-image', fn ($b, $id) => Http::json(AiImage::generate((int) $id, (string) ($b['prompt'] ?? ''), self::uid())), false],
             ['POST', '/articles/(\d+)/ai-review', fn ($b, $id) => Http::json(Ai::review((int) $id, self::uid())), false],
+            ['POST', '/ai/kick', function () {
+                // Called by the dashboard while AI reviews are queued, so they run even without the cron job.
+                Ai::recoverStale();
+                Db::exec("UPDATE articles SET ai_queued = 0 WHERE ai_queued = 1 AND status <> 'raw'"); // leftovers from an interrupted run
+                $queued = (int) Db::val("SELECT COUNT(*) FROM articles WHERE ai_queued = 1 AND status = 'raw'");
+                Http::json(['queued' => $queued]);
+                if ($queued) {
+                    Http::finishRequest();
+                    @set_time_limit(900);
+                    Ai::processQueue(840);
+                }
+            }, false],
             ['POST', '/editions/(\d+)/ai-review-all', function ($b, $id) {
                 $n = Ai::queueEdition((int) $id);
                 Http::json(['queued' => $n]);

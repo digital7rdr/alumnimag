@@ -26,7 +26,15 @@
     const init = { method: opts.method || 'GET', headers: {}, credentials: 'same-origin' };
     if (opts.form) init.body = opts.form;
     else if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
-    const res = await fetch('/api' + path, init);
+    let res;
+    try {
+      res = await fetch('/api' + path, init);
+    } catch {
+      // A dropped connection (server busy or a network blip): retry reads once before giving up.
+      if (init.method !== 'GET') throw new Error('Could not reach the server - check your connection and try again.');
+      await new Promise((r) => setTimeout(r, 1500));
+      try { res = await fetch('/api' + path, init); } catch { throw new Error('Could not reach the server - it may be busy. Wait a moment and click the folder again.'); }
+    }
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 && path !== '/login') { showLogin(); throw new Error('Please sign in'); }
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
@@ -47,6 +55,25 @@
     btn.innerHTML = `<span class="spin"></span> ${label || 'Working…'}`;
     try { return await fn(); } catch (e) { toast(e.message, true); } finally { btn.disabled = false; btn.innerHTML = old; }
   }
+
+  // One background poller at a time. It only checks for changes; the page is redrawn only when something changed,
+  // never while a dialog is open or the tab is hidden, and it stops after 15 minutes.
+  function stopPoll() { if (poller) { clearInterval(poller); poller = null; } }
+  function startPoll(check, ms) {
+    stopPoll();
+    const until = Date.now() + 15 * 60 * 1000;
+    let running = false;
+    poller = setInterval(async () => {
+      if (Date.now() > until) { clearInterval(poller); poller = null; return; }
+      if (running || document.hidden || !$('#modal').classList.contains('hidden')) return;
+      running = true;
+      try { await check(); } catch { /* try again next time */ } finally { running = false; }
+    }, ms);
+  }
+  const edSig = (ed) => ed.articles.map((a) => `${a.id}:${a.status}:${+a.ai_queued}:${a.ai_error ? 1 : 0}`).join('|') + `#${ed.waiting_count}`;
+  const busyEd = (ed) => ed.articles.some((a) => a.status === 'reviewing' || +a.ai_queued);
+  // While AI reviews are queued, nudge the server to work on them (needed when the cron job is not running).
+  const kickAi = (ed) => { if (ed.articles.some((a) => +a.ai_queued) && !ed.articles.some((a) => a.status === 'reviewing')) api('/ai/kick', { method: 'POST' }).catch(() => {}); };
 
   function modal(title, html, { wide = false } = {}) {
     $('#modalClose').onclick = closeModal;
@@ -215,6 +242,7 @@
 
   // ---------- Issue: folders ----------
   async function folderView(id, folderId) {
+    stopPoll();
     const [ed, tree] = await Promise.all([api(`/editions/${id}`), api(`/editions/${id}/folders`)]);
     const head = issueHead(ed, 'folders');
     const isAdmin = me.role === 'admin';
@@ -305,11 +333,19 @@
     $('#regen')?.addEventListener('click', (e) => busy(e.target, async () => { const r = await api(`/editions/${id}/folders/generate`, { method: 'POST' }); toast(r.created ? `${r.created} missing folder(s) added` : 'All folders are in place'); reload(); }));
     $$('.attach').forEach((s) => { s.onchange = async () => { if (!s.value) return; try { await api(`/files/${s.dataset.file}/attach`, { method: 'POST', body: { article_id: s.value } }); toast('Attached to the article'); reload(); } catch (e) { toast(e.message, true); } }; });
     $$('[data-rm]').forEach((b) => { b.onclick = async () => { if (!confirm('Remove this file from the folder? It stays saved on the server.')) return; try { await api(`/files/${b.dataset.rm}/waiting`, { method: 'DELETE' }); reload(); } catch (e) { toast(e.message, true); } }; });
-    if (ed.articles.some((a) => a.status === 'reviewing' || +a.ai_queued)) poller = setInterval(() => { if (location.hash.startsWith(`#/edition/${id}`)) reload(); }, 8000);
+    if (busyEd(ed)) {
+      const sig = edSig(ed), hash = location.hash;
+      startPoll(async () => {
+        if (location.hash !== hash) return;
+        const x = await api(`/editions/${id}`);
+        if (edSig(x) !== sig) reload(); else kickAi(x);
+      }, 8000);
+    }
   }
 
   // ---------- Issue: pipeline board ----------
   async function edition(id) {
+    stopPoll();
     const ed = await api(`/editions/${id}`);
     const head = issueHead(ed, 'board');
     const filter = sessionStorage.getItem('secFilter') || '';
@@ -342,7 +378,14 @@
     $('#secFilter').onchange = (e) => { sessionStorage.setItem('secFilter', e.target.value); edition(id); };
     $('#uploadBtn').onclick = () => uploadModal(id);
     $('#newBtn').onclick = () => newArticleModal(id);
-    if (ed.articles.some((a) => a.status === 'reviewing' || +a.ai_queued)) poller = setInterval(() => { if (location.hash === `#/edition/${id}/board`) edition(id); }, 6000);
+    if (busyEd(ed)) {
+      const sig = edSig(ed), hash = location.hash;
+      startPoll(async () => {
+        if (location.hash !== hash) return;
+        const x = await api(`/editions/${id}`);
+        if (edSig(x) !== sig) edition(id); else kickAi(x);
+      }, 6000);
+    }
   }
 
   function uploadModal(editionId) {
@@ -417,6 +460,7 @@
   // ---------- Article ----------
   let quill = null;
   async function article(id) {
+    stopPoll();
     const [a, people] = await Promise.all([api(`/articles/${id}`), api('/people?role=reviewer').catch(() => [])]);
     const images = a.files.filter((f) => f.kind === 'image');
     const others = a.files.filter((f) => f.kind !== 'image');
@@ -540,7 +584,10 @@
       location.hash = `#/edition/${a.edition_id}`;
     });
     window.onbeforeunload = () => (dirty ? true : undefined);
-    if (a.status === 'reviewing') poller = setInterval(async () => { const x = await api(`/articles/${id}`); if (x.status !== 'reviewing') article(id); }, 5000);
+    if (a.status === 'reviewing') {
+      const hash = location.hash;
+      startPoll(async () => { if (location.hash !== hash) return; const x = await api(`/articles/${id}`); if (x.status !== 'reviewing' && !dirty) article(id); }, 5000);
+    }
   }
 
   // ---------- AI image ----------
