@@ -10,12 +10,25 @@ final class Db
         if (!self::$pdo) {
             $dsn = sprintf('mysql:host=%s;port=%d;dbname=%s;charset=utf8mb4',
                 Config::get('DB_HOST', 'localhost'), (int) Config::get('DB_PORT', '3306'), Config::get('DB_NAME', ''));
-            self::$pdo = new PDO($dsn, (string) Config::get('DB_USER', ''), (string) Config::get('DB_PASSWORD', ''), [
+            $opts = [
                 PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
                 PDO::ATTR_EMULATE_PREPARES => false,
                 PDO::ATTR_STRINGIFY_FETCHES => false,
-            ]);
+                PDO::ATTR_TIMEOUT => 10,
+            ];
+            // Shared hosting briefly refuses new connections when it is busy (2002 "Operation not permitted",
+            // 1040/1203 too many connections, 2006 gone away): wait a moment and try again before failing.
+            for ($try = 1; ; $try++) {
+                try {
+                    self::$pdo = new PDO($dsn, (string) Config::get('DB_USER', ''), (string) Config::get('DB_PASSWORD', ''), $opts);
+                    break;
+                } catch (PDOException $e) {
+                    $transient = preg_match('/\[(2002|2006|2013|1040|1203)\]|Operation not permitted|Too many connections/i', $e->getMessage());
+                    if (!$transient || $try >= 4) throw $e;
+                    usleep([0, 300000, 800000, 1500000][$try]);
+                }
+            }
         }
         return self::$pdo;
     }

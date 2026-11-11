@@ -35,6 +35,11 @@
       await new Promise((r) => setTimeout(r, 1500));
       try { res = await fetch('/api' + path, init); } catch { throw new Error('Could not reach the server - it may be busy. Wait a moment and click the folder again.'); }
     }
+    if (res.status >= 500 && init.method === 'GET') {
+      // The server was briefly busy (e.g. database connection refused): try the read once more.
+      await new Promise((r) => setTimeout(r, 1500));
+      try { res = await fetch('/api' + path, init); } catch { /* keep the first answer */ }
+    }
     const data = await res.json().catch(() => ({}));
     if (res.status === 401 && path !== '/login') { showLogin(); throw new Error('Please sign in'); }
     if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);

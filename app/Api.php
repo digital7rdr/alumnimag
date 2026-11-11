@@ -230,8 +230,8 @@ final class Api
                 Http::json(['queued' => $queued]);
                 if ($queued) {
                     Http::finishRequest();
-                    @set_time_limit(900);
-                    Ai::processQueue(840);
+                    @set_time_limit(330);
+                    Ai::processQueue(300); // keep background work short on shared hosting; the next nudge or cron continues
                 }
             }, false],
             ['POST', '/editions/(\d+)/ai-review-all', function ($b, $id) {
@@ -240,8 +240,8 @@ final class Api
                 if ($n) {
                     // Answer the browser now, then keep working; the cron job finishes anything left.
                     Http::finishRequest();
-                    @set_time_limit(900);
-                    Ai::processQueue(840);
+                    @set_time_limit(330);
+                    Ai::processQueue(300); // keep background work short on shared hosting; the next nudge or cron continues
                 }
             }, false],
             ['POST', '/articles/(\d+)/stage', function ($b, $id) {
